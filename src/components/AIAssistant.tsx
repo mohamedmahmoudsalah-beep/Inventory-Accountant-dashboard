@@ -85,7 +85,7 @@ export function AIAssistant({ departmentName, rows, columns, onClose }: Props) {
         />
         <button
           onClick={send}
-          className="px-3 rounded-lg bg-[var(--accent)] text-[#1c1305] hover:opacity-90"
+          className="px-3 rounded-lg bg-[var(--accent)] text-white hover:opacity-90"
         >
           <Send size={15} />
         </button>

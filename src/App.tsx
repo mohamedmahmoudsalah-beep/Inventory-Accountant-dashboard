@@ -8,15 +8,16 @@ import { FilterBar } from "./components/FilterBar";
 import { ChartCard } from "./components/ChartCard";
 import { DataTable } from "./components/DataTable";
 import { AIAssistant } from "./components/AIAssistant";
-import { AddDepartmentModal } from "./components/AddDepartmentModal";
+import { NamePromptModal } from "./components/NamePromptModal";
 import { fetchSheetAsRows } from "./lib/sheets";
 import { sampleRows, sampleColumns } from "./data/sampleData";
-import type { ChartConfig, Department, FilterConfig } from "./types";
+import type { ChartConfig, Department, FilterConfig, TaskPage } from "./types";
 
-function makeDefaultDepartment(id: string, name: string): Department {
+function makeDefaultPage(id: string, name: string): TaskPage {
   return {
     id,
     name,
+    sourceType: "manual",
     sheetUrl: "",
     lastUpdated: null,
     rows: sampleRows,
@@ -29,24 +30,41 @@ function makeDefaultDepartment(id: string, name: string): Department {
   };
 }
 
+function makeDefaultDepartment(id: string, name: string): Department {
+  return {
+    id,
+    name,
+    pages: [makeDefaultPage(`${id}-overview`, "Overview")],
+  };
+}
+
 function DashboardApp() {
   const { user } = useAuth();
   const [departments, setDepartments] = useState<Department[]>([
     makeDefaultDepartment("sales", "Sales"),
   ]);
-  const [activeId, setActiveId] = useState("sales");
+  const [activeDeptId, setActiveDeptId] = useState("sales");
+  const [activePageId, setActivePageId] = useState("sales-overview");
   const [refreshing, setRefreshing] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
-  const [showAddDept, setShowAddDept] = useState(false);
+  const [addDeptOpen, setAddDeptOpen] = useState(false);
+  const [addPageForDept, setAddPageForDept] = useState<string | null>(null);
 
-  const active = departments.find((d) => d.id === activeId)!;
+  const activeDept = departments.find((d) => d.id === activeDeptId)!;
+  const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
 
-  function updateActive(patch: Partial<Department>) {
-    setDepartments((ds) => ds.map((d) => (d.id === activeId ? { ...d, ...patch } : d)));
+  function updatePage(patch: Partial<TaskPage>) {
+    setDepartments((ds) =>
+      ds.map((d) =>
+        d.id !== activeDeptId
+          ? d
+          : { ...d, pages: d.pages.map((p) => (p.id === activePage.id ? { ...p, ...patch } : p)) }
+      )
+    );
   }
 
   async function handleConnectSheet(url: string) {
-    updateActive({ sheetUrl: url });
+    updatePage({ sheetUrl: url });
     await loadSheet(url);
   }
 
@@ -55,7 +73,7 @@ function DashboardApp() {
     setRefreshing(true);
     try {
       const { rows, columns } = await fetchSheetAsRows(url);
-      updateActive({ rows, columns, lastUpdated: new Date().toISOString() });
+      updatePage({ rows, columns, lastUpdated: new Date().toISOString() });
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to load the sheet");
     } finally {
@@ -64,21 +82,21 @@ function DashboardApp() {
   }
 
   const filteredRows = useMemo(() => {
-    return active.rows.filter((row) =>
-      active.activeFilters.every((f) => f.value === "All" || String(row[f.column]) === f.value)
+    return activePage.rows.filter((row) =>
+      activePage.activeFilters.every((f) => f.value === "All" || String(row[f.column]) === f.value)
     );
-  }, [active.rows, active.activeFilters]);
+  }, [activePage.rows, activePage.activeFilters]);
 
   function setFilters(filters: FilterConfig[]) {
-    updateActive({ activeFilters: filters });
+    updatePage({ activeFilters: filters });
   }
 
   function updateChart(chart: ChartConfig) {
-    updateActive({ charts: active.charts.map((c) => (c.id === chart.id ? chart : c)) });
+    updatePage({ charts: activePage.charts.map((c) => (c.id === chart.id ? chart : c)) });
   }
 
   function removeChart(id: string) {
-    updateActive({ charts: active.charts.filter((c) => c.id !== id) });
+    updatePage({ charts: activePage.charts.filter((c) => c.id !== id) });
   }
 
   function addChart() {
@@ -86,17 +104,28 @@ function DashboardApp() {
       id: crypto.randomUUID(),
       title: "New chart",
       type: "bar",
-      xKey: active.columns[0],
-      yKey: active.columns[1] ?? active.columns[0],
+      xKey: activePage.columns[0],
+      yKey: activePage.columns[1] ?? activePage.columns[0],
     };
-    updateActive({ charts: [...active.charts, newChart] });
+    updatePage({ charts: [...activePage.charts, newChart] });
   }
 
   function addDepartment(name: string) {
     const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
-    setDepartments((ds) => [...ds, makeDefaultDepartment(id, name)]);
-    setActiveId(id);
-    setShowAddDept(false);
+    const dept = makeDefaultDepartment(id, name);
+    setDepartments((ds) => [...ds, dept]);
+    setActiveDeptId(id);
+    setActivePageId(dept.pages[0].id);
+    setAddDeptOpen(false);
+  }
+
+  function addPage(deptId: string, name: string) {
+    const pageId = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
+    const page = makeDefaultPage(pageId, name);
+    setDepartments((ds) => ds.map((d) => (d.id === deptId ? { ...d, pages: [...d.pages, page] } : d)));
+    setActiveDeptId(deptId);
+    setActivePageId(pageId);
+    setAddPageForDept(null);
   }
 
   const canEdit = user?.role === "admin";
@@ -105,35 +134,40 @@ function DashboardApp() {
     <div className="flex bg-[var(--bg)] min-h-svh">
       <Sidebar
         departments={departments}
-        activeId={activeId}
-        onSelect={setActiveId}
-        onAdd={() => setShowAddDept(true)}
+        activeDeptId={activeDeptId}
+        activePageId={activePageId}
+        onSelectPage={(deptId, pageId) => {
+          setActiveDeptId(deptId);
+          setActivePageId(pageId);
+        }}
+        onAddDepartment={() => setAddDeptOpen(true)}
+        onAddPage={(deptId) => setAddPageForDept(deptId)}
         onOpenAssistant={() => setShowAssistant(true)}
       />
 
       <main className="flex-1 min-w-0">
         <TopBar
-          department={active}
+          page={activePage}
           refreshing={refreshing}
-          onRefresh={() => loadSheet(active.sheetUrl)}
+          onRefresh={() => loadSheet(activePage.sheetUrl)}
           onConnectSheet={handleConnectSheet}
         />
 
         <FilterBar
-          columns={active.columns}
-          rows={active.rows}
-          filters={active.activeFilters}
+          columns={activePage.columns}
+          rows={activePage.rows}
+          filters={activePage.activeFilters}
           onChange={setFilters}
         />
 
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {active.charts.map((chart) => (
+            {activePage.charts.map((chart) => (
               <ChartCard
                 key={chart.id}
                 config={chart}
                 rows={filteredRows}
-                columns={active.columns}
+                columns={activePage.columns}
                 canEdit={canEdit}
                 onChange={updateChart}
                 onRemove={() => removeChart(chart.id)}
@@ -149,21 +183,35 @@ function DashboardApp() {
             )}
           </div>
 
-          <DataTable rows={filteredRows} columns={active.columns} />
+          <DataTable rows={filteredRows} columns={activePage.columns} />
         </div>
       </main>
 
       {showAssistant && (
         <AIAssistant
-          departmentName={active.name}
+          departmentName={`${activeDept.name} — ${activePage.name}`}
           rows={filteredRows}
-          columns={active.columns}
+          columns={activePage.columns}
           onClose={() => setShowAssistant(false)}
         />
       )}
 
-      {showAddDept && (
-        <AddDepartmentModal onClose={() => setShowAddDept(false)} onCreate={addDepartment} />
+      {addDeptOpen && (
+        <NamePromptModal
+          title="New team"
+          placeholder="e.g. Marketing, Operations..."
+          onClose={() => setAddDeptOpen(false)}
+          onCreate={addDepartment}
+        />
+      )}
+
+      {addPageForDept && (
+        <NamePromptModal
+          title="New task page"
+          placeholder="e.g. Weekly targets, Regional breakdown..."
+          onClose={() => setAddPageForDept(null)}
+          onCreate={(name) => addPage(addPageForDept, name)}
+        />
       )}
     </div>
   );

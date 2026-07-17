@@ -5,7 +5,7 @@ export interface AllowedUser {
   role: Role;
 }
 
-export type ChartType = "bar" | "line" | "pie";
+export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar";
 
 export interface ChartConfig {
   id: string;
@@ -24,13 +24,20 @@ export interface DataRow {
   [column: string]: string | number;
 }
 
-export interface Department {
+export interface TaskPage {
   id: string;
   name: string;
-  sheetUrl: string; // published Google Sheet CSV URL
+  sourceType?: "manual" | "csv-link" | "drive";
+  sheetUrl: string;
   lastUpdated: string | null;
   rows: DataRow[];
   columns: string[];
   charts: ChartConfig[];
   activeFilters: FilterConfig[];
+}
+
+export interface Department {
+  id: string;
+  name: string;
+  pages: TaskPage[];
 }

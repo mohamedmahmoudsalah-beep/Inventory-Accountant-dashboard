@@ -1,12 +1,13 @@
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
+  ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
 } from "recharts";
 import { Download, Trash2 } from "lucide-react";
 import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 
-const COLORS = ["#e8a33d", "#4fb286", "#7aa2e8", "#e0664f", "#c084fc", "#5fc8d8"];
+const COLORS = ["#c81e94", "#57c99a", "#e94fb0", "#7aa2e8", "#f2b807", "#8a5fd6"];
 
 interface Props {
   config: ChartConfig;
@@ -16,6 +17,8 @@ interface Props {
   onChange: (config: ChartConfig) => void;
   onRemove: () => void;
 }
+
+const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
 
 export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }: Props) {
   // Aggregate rows by xKey, summing yKey — keeps charts readable when the
@@ -71,7 +74,10 @@ export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }
           >
             <option value="bar">Bar</option>
             <option value="line">Line</option>
+            <option value="area">Area</option>
             <option value="pie">Pie</option>
+            <option value="scatter">Scatter</option>
+            <option value="radar">Radar</option>
           </select>
           <select
             value={config.xKey}
@@ -97,7 +103,7 @@ export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
-              <Tooltip contentStyle={{ background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <Tooltip contentStyle={tooltipStyle} />
               <Bar dataKey={config.yKey} fill="var(--accent)" radius={[4, 4, 0, 0]} />
             </BarChart>
           ) : config.type === "line" ? (
@@ -105,12 +111,42 @@ export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
-              <Tooltip contentStyle={{ background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <Tooltip contentStyle={tooltipStyle} />
               <Line type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
+          ) : config.type === "area" ? (
+            <AreaChart data={aggregated}>
+              <defs>
+                <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.5} />
+                  <stop offset="95%" stopColor="var(--accent)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+              <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
+              <YAxis stroke="var(--text-dim)" fontSize={11} />
+              <Tooltip contentStyle={tooltipStyle} />
+              <Area type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} fill="url(#areaFill)" />
+            </AreaChart>
+          ) : config.type === "scatter" ? (
+            <ScatterChart>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+              <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} name={config.xKey} />
+              <YAxis dataKey={config.yKey} stroke="var(--text-dim)" fontSize={11} name={config.yKey} />
+              <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+              <Scatter data={aggregated} fill="var(--accent)" />
+            </ScatterChart>
+          ) : config.type === "radar" ? (
+            <RadarChart data={aggregated}>
+              <PolarGrid stroke="var(--border)" />
+              <PolarAngleAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
+              <PolarRadiusAxis stroke="var(--text-dim)" fontSize={10} />
+              <Tooltip contentStyle={tooltipStyle} />
+              <Radar dataKey={config.yKey} stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.4} />
+            </RadarChart>
           ) : (
             <PieChart>
-              <Tooltip contentStyle={{ background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <Tooltip contentStyle={tooltipStyle} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Pie
                 data={aggregated}

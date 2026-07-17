@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
-import { LayoutDashboard } from "lucide-react";
+import { BrandMark } from "./BrandMark";
 
 export function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -16,9 +16,9 @@ export function LoginScreen() {
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 mb-8 justify-center">
           <div className="w-9 h-9 rounded-lg bg-[var(--accent-dim)] border border-[var(--accent-border)] flex items-center justify-center">
-            <LayoutDashboard size={18} color="var(--accent)" />
+            <BrandMark size={19} />
           </div>
-          <span className="text-lg font-semibold text-[var(--text-h)]">Team Insights</span>
+          <span className="text-lg font-semibold text-[var(--text-h)]">Breadfast Insights</span>
         </div>
 
         <form
@@ -42,7 +42,7 @@ export function LoginScreen() {
           )}
           <button
             type="submit"
-            className="w-full bg-[var(--accent)] text-[#1c1305] font-medium rounded-lg py-2 text-sm hover:opacity-90 transition"
+            className="w-full bg-[var(--accent)] text-white font-medium rounded-lg py-2 text-sm hover:opacity-90 transition"
           >
             Continue
           </button>

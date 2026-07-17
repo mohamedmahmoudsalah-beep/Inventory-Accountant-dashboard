@@ -1,8 +1,6 @@
-# Team Insights Dashboard
+# Breadfast Insights
 
-A Power BI–style dashboard: connect a Google Sheet per department, build charts/tables with filters, refresh on demand, export any chart or table to Excel, and ask an AI assistant questions about the data.
-
-This is a **real, working frontend** you can push to GitHub and deploy today. A few pieces (real login, real multi-user roles) are wired as clearly-marked demos so you can ship the UI first and harden the backend when you're ready — see "Making it production-ready" below.
+A Power BI–style dashboard for your team: each **team** (department) can have several **task pages**, each with its own connected Google Sheet, charts (bar/line/area/pie/scatter/radar), a searchable table, filters, one-click Excel export, and an AI assistant.
 
 ## Run it locally
 
@@ -11,56 +9,78 @@ npm install
 npm run dev
 ```
 
-Open the local URL it prints. Demo accounts (see `src/lib/auth.tsx`):
-- `admin@example.com` → admin (can add departments, connect sheets, edit charts)
+Demo accounts (see `src/lib/auth.tsx`):
+- `admin@example.com` → admin (can add teams/tasks, connect sheets, edit charts)
 - `manager@example.com` → viewer (read-only)
 
-## Connecting a Google Sheet
+## Connecting data — two ways
 
-1. In Google Sheets: **Share → General access → Anyone with the link → Viewer**.
-2. Copy the share link.
-3. In the app, as an admin, click **Connect Google Sheet** on any department page and paste the link.
-4. Click **Refresh data** any time your team updates the sheet.
+**1. Paste a link (quick, works today, no setup):**
+Share the sheet as "Anyone with the link can view", then click **Paste sheet link** on any task page.
 
-The app reads the sheet as published CSV — no Google Cloud project or OAuth setup needed for this part. The first row of the sheet becomes your column headers.
+**2. Browse from Drive (full access, no per-sheet sharing needed):**
+Click **Browse from Drive** to sign in with Google and pick any spreadsheet you can already see in your own Drive — private sheets included. This needs a one-time Google Cloud setup (free, ~5 minutes):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project (or use an existing one).
+2. **APIs & Services → Library** → enable **Google Sheets API** and **Google Picker API**.
+3. **APIs & Services → OAuth consent screen** → set it up as "Internal" if everyone is in your Google Workspace, otherwise "External" and add your team's emails as test users.
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID** → type "Web application" → add your dev URL (`http://localhost:5173`) and your deployed URL (e.g. `https://yourapp.vercel.app`) under **Authorized JavaScript origins**.
+5. Also under **Credentials**, create an **API key** (used by the Picker).
+6. Copy `.env.example` to `.env` in the project root and fill in:
+   ```
+   VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   VITE_GOOGLE_API_KEY=your-api-key
+   ```
+7. Restart `npm run dev`. When you deploy (Vercel/Netlify), add the same two variables in the project's Environment Variables settings.
+
+Until this is set up, **Browse from Drive** shows a reminder instead of crashing — the "paste a link" method keeps working regardless.
+
+Either way, click **Refresh data** any time the underlying sheet changes.
+
+## Charts available
+
+Bar, Line, Area, Pie, Scatter, and Radar — pick the type, X column, and Y column per chart. Every chart and the data table have their own **Export to Excel** button.
+
+## Teams and task pages
+
+- Each team in the sidebar can be expanded to show its task pages.
+- Admins can **Add team** and, inside a team, **Add task page** — each page has its own sheet connection, filters, and charts, so a "Sales" team could have separate pages like "Weekly targets" and "Regional breakdown".
 
 ## Deploying (free, no Lovable subscription needed)
 
 1. Push this folder to a GitHub repository.
-2. Go to [vercel.com](https://vercel.com) or [netlify.com](https://netlify.com), sign in with GitHub, and import the repo. Both auto-detect Vite and deploy for free.
-3. Once deployed, you'll get a free URL (e.g. `yourapp.vercel.app`). To use your own domain (bought from GoDaddy, Namecheap, etc.), add it under the project's **Domains** settings and follow the DNS instructions — this is free on both platforms.
+2. Go to [vercel.com](https://vercel.com) or [netlify.com](https://netlify.com), sign in with GitHub, import the repo — both auto-detect Vite and deploy for free.
+3. Add your own domain under the project's **Domains** settings (free on both platforms).
+4. If you set up Google Drive access above, add `VITE_GOOGLE_CLIENT_ID` and `VITE_GOOGLE_API_KEY` in the project's Environment Variables, and add the deployed URL to the OAuth client's Authorized JavaScript origins (step 4 above).
 
 ## Wiring up the AI assistant
 
-The assistant calls `/api/assistant` from the frontend (see `src/lib/assistant.ts`) — it never calls Anthropic directly, because an API key in frontend code would be visible to anyone via devtools.
+The assistant calls `/api/assistant` (see `src/lib/assistant.ts`) — it never calls Anthropic directly from the browser, since an API key in frontend code would be visible via devtools.
 
 To enable it on Vercel:
 1. Rename `api/assistant.example.js` to `api/assistant.js`.
-2. In your Vercel project → Settings → Environment Variables, add `ANTHROPIC_API_KEY` (from [console.anthropic.com](https://console.anthropic.com)).
-3. Redeploy. Vercel automatically turns files in `/api` into serverless functions.
-
-(On Netlify, move the same logic into `netlify/functions/assistant.js` using Netlify's handler signature, and add a redirect from `/api/assistant` to it in `netlify.toml`.)
+2. In Vercel → Settings → Environment Variables, add `ANTHROPIC_API_KEY` (from [console.anthropic.com](https://console.anthropic.com)).
+3. Redeploy — Vercel automatically turns files in `/api` into serverless functions.
 
 ## Making it production-ready
 
-Two things in this build are intentionally simple so you could get a working app fast. Before sharing this outside your own team, consider upgrading them:
+Two things are intentionally simple so you could ship the UI fast:
 
-**1. Real authentication.** `src/lib/auth.tsx` currently checks emails against a list hard-coded in the frontend — anyone who reads the JS bundle can see the allow-list, and there's no password/identity verification. Swap this for real auth once you need it to be secure, e.g.:
-   - [Supabase Auth](https://supabase.com/auth) with Google sign-in and a `profiles` table storing each user's role, or
-   - Any other auth provider (Auth0, Clerk, Firebase Auth).
+**1. Real authentication.** `src/lib/auth.tsx` checks emails against a list hard-coded in the frontend — visible to anyone reading the JS bundle, with no password/identity check. Before sharing this outside your own team, swap it for [Supabase Auth](https://supabase.com/auth) (Google sign-in + a `profiles` table with each user's role) or another provider (Auth0, Clerk, Firebase Auth).
 
-**2. Enforcing roles server-side.** Right now "admin vs viewer" only hides buttons in the UI. A determined user could still call the underlying functions. Once you add real auth, pair it with a real backend (Supabase Postgres + Row Level Security, or your own API) so permissions are enforced on the server, not just in the interface.
+**2. Enforcing roles server-side.** "Admin vs viewer" currently only hides buttons in the UI. Pair real auth with a real backend (Supabase Postgres + Row Level Security, or your own API) so permissions are enforced server-side, not just in the interface.
 
-Everything else — the sheet connection, charts, filters, tables, Excel export, and the assistant proxy pattern — is production-ready as-is.
+Everything else — Drive/Sheets connection, charts, filters, tables, Excel export, and the assistant proxy pattern — is production-ready as-is.
 
 ## Project structure
 
 ```
 src/
-  components/     UI components (Sidebar, TopBar, FilterBar, ChartCard, DataTable, AIAssistant, ...)
-  lib/             auth.tsx (login), sheets.ts (Google Sheet fetching), exportExcel.ts, assistant.ts
+  components/     Sidebar, TopBar, FilterBar, ChartCard, DataTable, AIAssistant, LoginScreen, NamePromptModal, BrandMark
+  lib/             auth.tsx (login), sheets.ts (reads a sheet, private or public), googleDrive.ts (OAuth + Picker), exportExcel.ts, assistant.ts
   data/            sample demo data shown before a sheet is connected
   types/           shared TypeScript types
 api/
   assistant.example.js   serverless proxy to the Anthropic API (rename to enable)
+.env.example        copy to .env and fill in for real Google Drive access
 ```
