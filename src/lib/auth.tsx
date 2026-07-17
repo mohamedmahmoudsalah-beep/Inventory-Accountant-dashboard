@@ -7,6 +7,7 @@ import type { AllowedUser } from "../types";
 // row-level security) before sharing this app outside your team.
 // See README.md "Making auth real" for the migration steps.
 const ALLOWED_USERS: AllowedUser[] = [
+  { email: "mohamed.mahmoudsalah@breadfast.com", role: "admin" },
   { email: "admin@example.com", role: "admin" },
   { email: "manager@example.com", role: "viewer" },
 ];
