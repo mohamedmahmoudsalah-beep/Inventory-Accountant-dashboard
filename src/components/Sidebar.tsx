@@ -1,72 +1,93 @@
-import { LayoutDashboard, Plus, LogOut, Sparkles } from "lucide-react";
-import type { Department } from "../types";
-import { useAuth } from "../lib/auth";
+import React, { useState } from 'react';
+import { Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Department, User } from '../types';
 
-interface Props {
+interface SidebarProps {
   departments: Department[];
-  activeId: string;
-  onSelect: (id: string) => void;
-  onAdd: () => void;
-  onOpenAssistant: () => void;
+  activeDepartment: string;
+  activeSubTask: string | null;
+  onSelectDepartment: (id: string, subTaskId?: string) => void;
+  onAddDepartment: () => void;
+  currentUser: User;
 }
 
-export function Sidebar({ departments, activeId, onSelect, onAdd, onOpenAssistant }: Props) {
-  const { user, logout } = useAuth();
+export const Sidebar: React.FC<SidebarProps> = ({
+  departments,
+  activeDepartment,
+  activeSubTask,
+  onSelectDepartment,
+  onAddDepartment,
+  currentUser
+}) => {
+  const [expandedDepts, setExpandedDepts] = useState<Record<string, boolean>>({});
+
+  const toggleDept = (id: string) => {
+    setExpandedDepts(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
   return (
-    <aside className="w-60 shrink-0 bg-[var(--panel)] border-r border-[var(--border)] flex flex-col h-svh">
-      <div className="flex items-center gap-2 px-4 h-14 border-b border-[var(--border)]">
-        <div className="w-7 h-7 rounded-md bg-[var(--accent-dim)] border border-[var(--accent-border)] flex items-center justify-center shrink-0">
-          <LayoutDashboard size={15} color="var(--accent)" />
-        </div>
-        <span className="text-sm font-semibold text-[var(--text-h)] truncate">Team Insights</span>
+    <div className="w-64 bg-card border-r border-border flex flex-col h-screen">
+      <div className="p-4 border-b border-border flex items-center gap-3">
+        {/* اللوجو الجديد هنا */}
+        <img src="/images.png" alt="Breadfast Logo" className="w-8 h-8 rounded" />
+        <span className="font-bold text-lg text-primary">Breadfast Team</span>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-3 px-2">
-        <p className="px-2 text-xs uppercase tracking-wide text-[var(--text-dim)] mb-2">
+      <div className="flex-1 overflow-y-auto p-4">
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">
           Departments
-        </p>
-        {departments.map((d) => (
-          <button
-            key={d.id}
-            onClick={() => onSelect(d.id)}
-            className={`w-full text-left px-2.5 py-2 rounded-lg text-sm mb-0.5 transition ${
-              d.id === activeId
-                ? "bg-[var(--accent-dim)] text-[var(--text-h)] border border-[var(--accent-border)]"
-                : "text-[var(--text-dim)] hover:bg-[var(--panel-raised)] border border-transparent"
-            }`}
-          >
-            {d.name}
-          </button>
-        ))}
+        </h2>
+        <div className="space-y-1">
+          {departments.map((dept) => (
+            <div key={dept.id}>
+              <button
+                onClick={() => {
+                  toggleDept(dept.id);
+                  onSelectDepartment(dept.id);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-md transition-colors ${
+                  activeDepartment === dept.id && !activeSubTask
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-foreground hover:bg-muted'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="font-medium">{dept.name}</span>
+                </div>
+                {dept.subTasks.length > 0 && (
+                  expandedDepts[dept.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+                )}
+              </button>
+              
+              {/* التاسكات الفرعية */}
+              {expandedDepts[dept.id] && dept.subTasks.map(task => (
+                <button
+                  key={task.id}
+                  onClick={() => onSelectDepartment(dept.id, task.id)}
+                  className={`w-full flex items-center pl-8 pr-3 py-1.5 mt-1 rounded-md text-sm transition-colors ${
+                    activeSubTask === task.id
+                      ? 'bg-primary/20 text-primary font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  }`}
+                >
+                  {task.name}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
 
-        {user?.role === "admin" && (
+        {/* إخفاء زرار الإضافة عن المستخدم العادي */}
+        {currentUser.role === 'ADMIN' && (
           <button
-            onClick={onAdd}
-            className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mt-1 text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+            onClick={onAddDepartment}
+            className="w-full mt-4 flex items-center gap-2 px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
           >
-            <Plus size={15} /> Add department
+            <Plus size={18} />
+            <span>Add department</span>
           </button>
         )}
-      </nav>
-
-      <div className="p-2 border-t border-[var(--border)]">
-        <button
-          onClick={onOpenAssistant}
-          className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
-        >
-          <Sparkles size={15} color="var(--accent)" /> AI Assistant
-        </button>
-        <div className="flex items-center justify-between px-2.5 py-2">
-          <div className="min-w-0">
-            <p className="text-xs text-[var(--text)] truncate">{user?.email}</p>
-            <p className="text-[10px] text-[var(--text-dim)] uppercase">{user?.role}</p>
-          </div>
-          <button onClick={logout} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
-            <LogOut size={15} />
-          </button>
-        </div>
       </div>
-    </aside>
+    </div>
   );
-}
+};
