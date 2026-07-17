@@ -1,19 +1,22 @@
 import { useState } from "react";
-import { RefreshCw, Link2, Loader2, FolderOpen } from "lucide-react";
-import type { TaskPage } from "../types";
+import { RefreshCw, Link2, Loader2, FolderOpen, FileUp } from "lucide-react";
+import type { DataRow, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
 import { pickGoogleSheet, isGoogleDriveConfigured } from "../lib/googleDrive";
+import { ImportPanel } from "./ImportPanel";
 
 interface Props {
   page: TaskPage;
   refreshing: boolean;
   onRefresh: () => void;
   onConnectSheet: (url: string) => void;
+  onImportData: (rows: DataRow[], columns: string[]) => void;
 }
 
-export function TopBar({ page, refreshing, onRefresh, onConnectSheet }: Props) {
+export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData }: Props) {
   const { user } = useAuth();
   const [showConnect, setShowConnect] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [urlInput, setUrlInput] = useState(page.sheetUrl);
   const [pickerBusy, setPickerBusy] = useState(false);
 
@@ -29,7 +32,15 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet }: Props) {
       const picked = await pickGoogleSheet();
       if (picked) onConnectSheet(picked.url);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Couldn't open Google Drive picker");
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.startsWith("WRONG_ACCOUNT:")) {
+        const wrongEmail = msg.split(":")[1];
+        alert(
+          `This Drive connection is limited to mohamed.mahmoudsalah@breadfast.com.\nYou signed in as ${wrongEmail}. Please try again and pick the right account.`
+        );
+      } else {
+        alert(msg || "Couldn't open Google Drive picker");
+      }
     } finally {
       setPickerBusy(false);
     }
@@ -57,6 +68,12 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet }: Props) {
               >
                 {pickerBusy ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
                 Browse from Drive
+              </button>
+              <button
+                onClick={() => setShowImport(true)}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-raised)]"
+              >
+                <FileUp size={14} /> Import file
               </button>
               <button
                 onClick={() => setShowConnect((s) => !s)}
@@ -99,6 +116,13 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet }: Props) {
             Connect
           </button>
         </form>
+      )}
+
+      {showImport && (
+        <ImportPanel
+          onApply={(rows, columns) => onImportData(rows, columns)}
+          onClose={() => setShowImport(false)}
+        />
       )}
     </div>
   );

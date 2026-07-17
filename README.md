@@ -19,7 +19,7 @@ Demo accounts (see `src/lib/auth.tsx`):
 Share the sheet as "Anyone with the link can view", then click **Paste sheet link** on any task page.
 
 **2. Browse from Drive (full access, no per-sheet sharing needed):**
-Click **Browse from Drive** to sign in with Google and pick any spreadsheet you can already see in your own Drive — private sheets included. This needs a one-time Google Cloud setup (free, ~5 minutes):
+Click **Browse from Drive** to sign in with Google and pick any spreadsheet you can already see in your own Drive — private sheets included. Access is locked to **mohamed.mahmoudsalah@breadfast.com** only (set in `src/lib/googleDrive.ts` as `ALLOWED_DRIVE_EMAIL`) — anyone else who signs in gets rejected before the picker opens. This needs a one-time Google Cloud setup (free, ~5 minutes):
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project (or use an existing one).
 2. **APIs & Services → Library** → enable **Google Sheets API** and **Google Picker API**.
@@ -37,6 +37,13 @@ Until this is set up, **Browse from Drive** shows a reminder instead of crashing
 
 Either way, click **Refresh data** any time the underlying sheet changes.
 
+## Importing Excel/CSV files directly
+
+Click **Import file** on any task page (no Google account needed for this one). Three modes:
+- **Replace** — upload one `.xlsx`/`.xls`/`.csv` file; it becomes the page's data.
+- **Append (stack rows)** — upload several files; their rows get combined into one table (columns don't need to match exactly — mismatched ones are filled with blanks).
+- **Merge (join)** — upload two files and pick the matching column in each (e.g. "Employee ID" in both); columns from the second file get added onto the first file's rows, like a VLOOKUP/left join.
+
 ## Charts available
 
 Bar, Line, Area, Pie, Scatter, and Radar — pick the type, X column, and Y column per chart. Every chart and the data table have their own **Export to Excel** button.
@@ -51,7 +58,7 @@ Bar, Line, Area, Pie, Scatter, and Radar — pick the type, X column, and Y colu
 1. Push this folder to a GitHub repository.
 2. Go to [vercel.com](https://vercel.com) or [netlify.com](https://netlify.com), sign in with GitHub, import the repo — both auto-detect Vite and deploy for free.
 3. Add your own domain under the project's **Domains** settings (free on both platforms).
-4. If you set up Google Drive access above, add `VITE_GOOGLE_CLIENT_ID` and `VITE_GOOGLE_API_KEY` in the project's Environment Variables, and add the deployed URL to the OAuth client's Authorized JavaScript origins (step 4 above).
+4. If you set up Google Drive access above, add `VITE_GOOGLE_CLIENT_ID` and `VITE_GOOGLE_API_KEY` in the project's Environment Variables, and add the deployed URL to the OAuth client's Authorized JavaScript origins (step 4 above). **Without these two variables set on Vercel/Netlify itself (not just your local `.env`), "Browse from Drive" will show "Google Drive isn't connected yet" even though it works locally** — local `.env` files are never uploaded, so the hosting platform needs its own copy of these values.
 
 ## Wiring up the AI assistant
 

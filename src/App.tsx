@@ -11,7 +11,7 @@ import { AIAssistant } from "./components/AIAssistant";
 import { NamePromptModal } from "./components/NamePromptModal";
 import { fetchSheetAsRows } from "./lib/sheets";
 import { sampleRows, sampleColumns } from "./data/sampleData";
-import type { ChartConfig, Department, FilterConfig, TaskPage } from "./types";
+import type { ChartConfig, DataRow, Department, FilterConfig, TaskPage } from "./types";
 
 function makeDefaultPage(id: string, name: string): TaskPage {
   return {
@@ -75,10 +75,23 @@ function DashboardApp() {
       const { rows, columns } = await fetchSheetAsRows(url);
       updatePage({ rows, columns, lastUpdated: new Date().toISOString() });
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to load the sheet");
+      alert(
+        e instanceof Error && e.message !== "Failed to fetch"
+          ? e.message
+          : "Couldn't load this sheet directly. It's probably private — either share it as \"Anyone with the link can view\", or use \"Browse from Drive\" to sign in and pick it without changing its sharing settings."
+      );
     } finally {
       setRefreshing(false);
     }
+  }
+
+  function handleImportData(rows: DataRow[], columns: string[]) {
+    updatePage({
+      rows,
+      columns,
+      sourceType: "manual",
+      lastUpdated: new Date().toISOString(),
+    });
   }
 
   const filteredRows = useMemo(() => {
@@ -151,6 +164,7 @@ function DashboardApp() {
           refreshing={refreshing}
           onRefresh={() => loadSheet(activePage.sheetUrl)}
           onConnectSheet={handleConnectSheet}
+          onImportData={handleImportData}
         />
 
         <FilterBar

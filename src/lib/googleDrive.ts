@@ -19,7 +19,12 @@ declare global {
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 export const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY ?? "";
 
-const SCOPES = "https://www.googleapis.com/auth/drive.readonly";
+// Only this Google account is allowed to connect Drive/Sheets. Anyone else
+// who signs in gets rejected before the picker ever opens.
+export const ALLOWED_DRIVE_EMAIL = "mohamed.mahmoudsalah@breadfast.com";
+
+const SCOPES =
+  "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email";
 
 let gisLoaded = false;
 let pickerLoaded = false;
@@ -61,22 +66,45 @@ async function ensurePickerLoaded() {
   pickerLoaded = true;
 }
 
-async function getAccessToken(): Promise<string> {
-  await ensureGisLoaded();
-  if (accessToken) return accessToken;
+async function verifySignedInEmail(token: string): Promise<string> {
+  const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Couldn't verify the signed-in Google account.");
+  const info = await res.json();
+  return (info.email as string) ?? "";
+}
 
-  return new Promise((resolve, reject) => {
+async function getAccessToken(forceAccountPicker = false): Promise<string> {
+  await ensureGisLoaded();
+  if (accessToken && !forceAccountPicker) return accessToken;
+
+  const token = await new Promise<string>((resolve, reject) => {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: SCOPES,
       callback: (resp: any) => {
         if (resp.error) return reject(new Error(resp.error));
-        accessToken = resp.access_token;
         resolve(resp.access_token);
       },
     });
-    tokenClient.requestAccessToken({ prompt: "" });
+    tokenClient.requestAccessToken({
+      prompt: forceAccountPicker ? "select_account" : "",
+    });
   });
+
+  const email = await verifySignedInEmail(token);
+  if (email.toLowerCase() !== ALLOWED_DRIVE_EMAIL.toLowerCase()) {
+    // Revoke this token immediately - we don't want to hold access to the
+    // wrong account at all, even in memory.
+    window.google.accounts.oauth2.revoke(token, () => {});
+    throw new Error(
+      `WRONG_ACCOUNT:${email || "unknown account"}`
+    );
+  }
+
+  accessToken = token;
+  return token;
 }
 
 /**
@@ -89,7 +117,7 @@ export async function pickGoogleSheet(): Promise<{ url: string; name: string } |
     throw new Error("MISSING_CONFIG");
   }
 
-  const token = await getAccessToken();
+  const token = await getAccessToken(true);
   await ensurePickerLoaded();
 
   return new Promise((resolve) => {
