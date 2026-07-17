@@ -1,63 +1,38 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --bg: #14161c;
-  --panel: #1b1e26;
-  --panel-raised: #21242e;
-  --border: #2c303c;
-  --text: #d7dae2;
-  --text-dim: #8b909f;
-  --text-h: #f4f5f7;
-  --accent: #e8a33d;
-  --accent-dim: rgba(232, 163, 61, 0.14);
-  --accent-border: rgba(232, 163, 61, 0.4);
-  --good: #4fb286;
-  --bad: #e0664f;
-
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
-
-  color-scheme: dark;
-  color: var(--text);
-  background: var(--bg);
-  font-family: var(--sans);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  :root {
+    --background: 0 0% 98%; /* خلفية فاتحة جداً */
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    /* لون Breadfast المستوحى من اللوجو */
+    --primary: 325 100% 35%; /* درجات الماجينتا/البنفسجي */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 325 100% 35%; /* استخدام نفس اللون كـ Accent */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 325 100% 35%;
+    --radius: 0.75rem;
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100svh;
-}
-
-#root {
-  min-height: 100svh;
-}
-
-h1, h2, h3 {
-  color: var(--text-h);
-  font-weight: 600;
-  margin: 0;
-}
-
-.num {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
 }
