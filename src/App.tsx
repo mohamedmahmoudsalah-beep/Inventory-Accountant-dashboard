@@ -16,7 +16,7 @@ import { UserManagement } from "./components/UserManagement";
 import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
 import { fetchSheetAsRows } from "./lib/sheets";
 import { sampleRows, sampleColumns } from "./data/sampleData";
-import { loadPersistedState, savePersistedState } from "./lib/persistence";
+import { loadRemoteState, saveRemoteState, subscribeToRemoteState } from "./lib/remoteState";
 import type { ChartConfig, DataRow, Department, FilterConfig, PivotConfig, TaskPage } from "./types";
 
 function makeDefaultPage(id: string, name: string): TaskPage {
@@ -66,22 +66,54 @@ function passesFilter(row: DataRow, f: FilterConfig): boolean {
 
 function DashboardApp() {
   const { user } = useAuth();
-  const persisted = loadPersistedState();
 
-  const [departments, setDepartments] = useState<Department[]>(
-    persisted?.departments ?? [makeDefaultDepartment("sales", "Sales")]
-  );
-  const [activeDeptId, setActiveDeptId] = useState(persisted?.activeDeptId ?? "sales");
-  const [activePageId, setActivePageId] = useState(persisted?.activePageId ?? "sales-overview");
+  const [departments, setDepartments] = useState<Department[]>([makeDefaultDepartment("sales", "Sales")]);
+  const [activeDeptId, setActiveDeptId] = useState("sales");
+  const [activePageId, setActivePageId] = useState("sales-overview");
+  const [stateReady, setStateReady] = useState(false);
   const [view, setView] = useState<"dashboard" | "dataSources" | "users">("dashboard");
   const [refreshing, setRefreshing] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
   const [addDeptOpen, setAddDeptOpen] = useState(false);
   const [addPageForDept, setAddPageForDept] = useState<string | null>(null);
 
+  // Initial load (shared via Supabase when configured, else this browser's
+  // localStorage) + live updates whenever anyone else saves changes.
   useEffect(() => {
-    savePersistedState({ departments, activeDeptId, activePageId });
-  }, [departments, activeDeptId, activePageId]);
+    let cancelled = false;
+
+    (async () => {
+      const persisted = await loadRemoteState();
+      if (cancelled) return;
+      if (persisted) {
+        setDepartments(persisted.departments);
+        setActiveDeptId(persisted.activeDeptId);
+        setActivePageId(persisted.activePageId);
+      }
+      setStateReady(true);
+    })();
+
+    const unsubscribe = subscribeToRemoteState((state) => {
+      setDepartments(state.departments);
+      setActiveDeptId(state.activeDeptId);
+      setActivePageId(state.activePageId);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  // Debounced save - avoids writing on every keystroke while editing a
+  // chart title, for example.
+  useEffect(() => {
+    if (!stateReady) return; // never save the placeholder default over real data
+    const timer = setTimeout(() => {
+      saveRemoteState({ departments, activeDeptId, activePageId });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [departments, activeDeptId, activePageId, stateReady]);
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
@@ -222,6 +254,14 @@ function DashboardApp() {
   const canEdit = canEditWidgets(user?.role);
   const canExportData = canExportPerm(user?.role);
   const canFilter = canUseFilters(user?.role);
+
+  if (!stateReady) {
+    return (
+      <div className="min-h-svh flex items-center justify-center bg-[var(--bg)]">
+        <p className="text-sm text-[var(--text-dim)]">Loading your dashboard…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex bg-[var(--bg)] min-h-svh">

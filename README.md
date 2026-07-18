@@ -28,7 +28,57 @@ Four roles now exist instead of just admin/viewer:
 
 Admins manage who has access from inside the app now: click **Manage Users** in the sidebar to add a teammate by email, change their role, or remove them — no code edits or redeploys needed for day-to-day access changes.
 
-**Important limitation:** this user list lives in the browser's local storage (see `src/lib/auth.tsx`), not on a server. It won't sync across different browsers or devices, and anyone with devtools access on that machine could technically inspect or edit it. It's a real usability improvement over hard-coding users in source, but it is not a substitute for server-side auth — see "Making it production-ready" below before relying on this for sensitive data.
+**Important limitation:** by default this user list lives in the browser's local storage (see `src/lib/auth.tsx`) — not shared across devices. Set up shared storage below (Supabase) to make it a real, shared list everyone sees, with live updates. Either way, it's still a client-side email allow-list rather than real server-side authentication — see "Making it production-ready" before relying on this for sensitive data.
+
+## Setting up shared storage (so everyone sees the same data)
+
+By default, all the dashboard data (teams, pages, charts, filters, and the user list) lives only in your own browser's local storage — great for trying things out, but nobody else sees your changes, and switching browsers/devices loses it.
+
+To make it real and shared across your whole team (free, ~10 minutes):
+
+1. Go to [supabase.com](https://supabase.com) → sign up → **New project**. Pick any name/region, set a database password (you won't need it day-to-day), and wait ~2 minutes for it to spin up.
+2. In your new project, go to the **SQL Editor** (left sidebar) → **New query**, paste this, and click **Run**:
+
+   ```sql
+   create table app_state (
+     id text primary key,
+     data jsonb not null,
+     updated_at timestamptz default now()
+   );
+
+   create table app_users (
+     email text primary key,
+     role text not null,
+     created_at timestamptz default now()
+   );
+
+   alter table app_state enable row level security;
+   alter table app_users enable row level security;
+
+   -- This app authenticates with its own email allow-list rather than
+   -- Supabase Auth, so these policies simply allow the anon key full
+   -- access. That matches this project's existing "client-side gate"
+   -- trust model, just now shared across devices instead of siloed to one
+   -- browser. Tighten this (e.g. real Supabase Auth + per-row policies)
+   -- before storing anything sensitive - see "Making it production-ready".
+   create policy "anon full access" on app_state for all using (true) with check (true);
+   create policy "anon full access" on app_users for all using (true) with check (true);
+
+   alter publication supabase_realtime add table app_state;
+   alter publication supabase_realtime add table app_users;
+   ```
+
+3. Go to **Settings → API** in the left sidebar. Copy the **Project URL** and the **anon public** key.
+4. Add them to your `.env` file (copy `.env.example` if you haven't already):
+   ```
+   VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-public-key
+   ```
+5. Add the same two variables in Vercel/Netlify's Environment Variables settings, then redeploy (same as the Google Drive variables — local `.env` files never get uploaded).
+
+Once both variables are set, the app automatically starts reading/writing through Supabase instead of local storage — no code changes needed. Every browser and device that opens the site will see the same teams, pages, charts, and user list, and changes appear live for everyone else without needing to refresh (via Supabase's realtime subscriptions).
+
+**Security note:** because there's no real per-user server-side authentication (see "Making it production-ready" below), the anon key embedded in the app has full read/write access to these two tables for anyone who has it — including someone who extracted it from the deployed site's JS bundle, not just people who signed in through the app's UI. This is a reasonable trade-off for an internal tool your team trusts, but it is not equivalent to real access control. Move to Supabase Auth with per-row policies before storing anything sensitive.
 
 ## Run it locally
 

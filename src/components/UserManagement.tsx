@@ -1,20 +1,22 @@
 import { useState } from "react";
-import { Trash2, UserPlus } from "lucide-react";
+import { Trash2, UserPlus, Globe, HardDrive } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "../lib/permissions";
+import { isSupabaseConfigured } from "../lib/supabase";
 import type { Role } from "../types";
 
 const ROLES: Role[] = ["admin", "manager", "employee", "viewer"];
 
 export function UserManagement() {
-  const { users, addUser, updateUserRole, removeUser } = useAuth();
+  const { users, usersLoading, addUser, updateUserRole, removeUser } = useAuth();
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<Role>("employee");
   const [error, setError] = useState<string | null>(null);
+  const shared = isSupabaseConfigured();
 
-  function handleAdd(e: React.FormEvent) {
+  async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
-    const result = addUser(newEmail, newRole);
+    const result = await addUser(newEmail, newRole);
     if (!result.ok) {
       setError(result.message ?? "Couldn't add that user.");
       return;
@@ -24,22 +26,36 @@ export function UserManagement() {
     setNewRole("employee");
   }
 
-  function handleRoleChange(email: string, role: Role) {
-    const result = updateUserRole(email, role);
+  async function handleRoleChange(email: string, role: Role) {
+    const result = await updateUserRole(email, role);
     if (!result.ok) alert(result.message);
   }
 
-  function handleRemove(email: string) {
-    const result = removeUser(email);
+  async function handleRemove(email: string) {
+    const result = await removeUser(email);
     if (!result.ok) alert(result.message);
   }
 
   return (
     <div className="p-6 max-w-3xl">
-      <h1 className="text-lg mb-1">Manage Users</h1>
-      <p className="text-xs text-[var(--text-dim)] mb-5">
-        Add teammates by email and set what they can do. Changes apply immediately in this browser.
-      </p>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg mb-1">Manage Users</h1>
+          <p className="text-xs text-[var(--text-dim)]">
+            Add teammates by email and set what they can do.
+          </p>
+        </div>
+        <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${
+          shared
+            ? "border-[var(--mint)] text-[var(--mint)]"
+            : "border-[var(--border)] text-[var(--text-dim)]"
+        }`}>
+          {shared ? <Globe size={12} /> : <HardDrive size={12} />}
+          {shared ? "Shared across everyone" : "This browser only"}
+        </span>
+      </div>
+
+      {usersLoading && <p className="text-sm text-[var(--text-dim)] mb-3">Loading users…</p>}
 
       <form onSubmit={handleAdd} className="flex flex-wrap gap-2 mb-3">
         <input
