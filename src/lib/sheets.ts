@@ -72,7 +72,9 @@ export async function fetchSheetAsRows(sheetUrl: string, tabTitle?: string): Pro
   const id = extractSheetId(sheetUrl);
 
   if (token && id) {
-    const range = tabTitle ? `'${tabTitle}'!A1:ZZ20000` : "A1:ZZ20000";
+    // No row cap: specifying the sheet/tab name alone (no row bound) tells
+    // the Sheets API to return every row it has, not just the first N.
+    const range = tabTitle ? `'${tabTitle}'!A:ZZ` : "A:ZZ";
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`,
       { headers: { Authorization: `Bearer ${token}` } }

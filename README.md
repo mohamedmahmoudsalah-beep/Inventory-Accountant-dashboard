@@ -4,6 +4,23 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Bug fixes:**
+- Fixed a real bug where numbers with thousands separators (e.g. `259,022,315`) were silently read as 0 in charts/pivots — now parsed correctly.
+- Fixed a hard 20,000-row cap when reading a Google Sheet — the app now pulls the entire sheet/tab, no matter how large.
+- Fixed the AI assistant's example serverless function using an invalid model name, which made every request fail.
+
+**New widgets:** Matrix (true row × column crosstab), Card (single KPI number), Text & Image (freeform notes/images), Treemap chart type. Charts also have a "Show values" toggle to print numbers directly on bars/lines/areas.
+
+**Pivot tables leveled up:** unlimited group-by columns (not just 2), multiple value columns per pivot, sortable column headers, and all the configuration now lives behind an "Edit" button instead of cluttering the widget.
+
+**Measures & calculated columns:** open "Data model" (top bar) to add calculated columns (Excel-like formulas, e.g. `IF(region == "Cairo", revenue * 1.1, revenue)`) and Measures (reusable, optionally conditional aggregations, like a simple SUMIF) — both become selectable wherever a value column is picked (Pivot, Matrix, Card).
+
+**Team/page management:** new teams and pages start empty (no more sample data) — Admins and Managers can rename or delete any team/page from the sidebar.
+
+**Data table:** each column now shows a detected type (number/date/text); Admins/Managers can click any raw cell to edit it directly (calculated columns are shown but not editable, marked with a small ƒ).
+
+**UI:** the sidebar can now collapse to icons-only for more screen space; added a Dark/Light mode toggle; renamed the app to "General Report Inventory Accountant team".
+
 - **Data persists across reloads** — teams, pages, charts, pivots, and filters are saved to your browser's local storage automatically.
 - **Google Drive sign-in is cached for the session** — you won't be asked to sign in again on every page reload (it still expires after about an hour, or if you close the tab, since access tokens shouldn't live forever).
 - **Pick a specific tab** when connecting a spreadsheet via "Browse from Drive" — if it has more than one tab, you'll be asked which one to load.
@@ -146,6 +163,12 @@ To enable it on Vercel:
 1. Rename `api/assistant.example.js` to `api/assistant.js`.
 2. In Vercel → Settings → Environment Variables, add `ANTHROPIC_API_KEY` (from [console.anthropic.com](https://console.anthropic.com)).
 3. Redeploy — Vercel automatically turns files in `/api` into serverless functions.
+
+**Troubleshooting "I couldn't reach the assistant backend":**
+- Did you rename the file (step 1)? If it's still `assistant.example.js`, Vercel never turns it into an endpoint and `/api/assistant` 404s.
+- Is `ANTHROPIC_API_KEY` set in Vercel's **Environment Variables** (not just your local `.env`)? Did you redeploy after adding it?
+- Check **Vercel → your project → Deployments → (latest) → Functions/Logs** for the actual error message from `api/assistant.js` — it's usually more specific than what shows in the chat panel.
+- Make sure the `model` value in `api/assistant.js` is a real, current model name (check [docs.claude.com](https://docs.claude.com) for the current list) — an outdated or mistyped model name will make every request fail with a 400 error.
 
 ## Making it production-ready
 

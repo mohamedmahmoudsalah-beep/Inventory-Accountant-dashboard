@@ -35,6 +35,30 @@
   -webkit-font-smoothing: antialiased;
 }
 
+[data-theme="light"] {
+  --bg: #faf7fb;
+  --panel: #ffffff;
+  --panel-raised: #f4eef6;
+  --border: #e6dbe9;
+  --text: #392f3d;
+  --text-dim: #8c7f92;
+  --text-h: #1c1420;
+
+  --accent: #c81e94;
+  --accent-2: #e94fb0;
+  --accent-dim: rgba(200, 30, 148, 0.08);
+  --accent-border: rgba(200, 30, 148, 0.35);
+
+  --mint: #2e9d72;
+  --mint-dim: rgba(46, 157, 114, 0.10);
+
+  --good: #2e9d72;
+  --bad: #c94a35;
+  --info: #4472c4;
+
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
 }

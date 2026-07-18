@@ -4,12 +4,14 @@ import { X } from "lucide-react";
 interface Props {
   title: string;
   placeholder: string;
+  initialValue?: string;
+  submitLabel?: string;
   onClose: () => void;
   onCreate: (name: string) => void;
 }
 
-export function NamePromptModal({ title, placeholder, onClose, onCreate }: Props) {
-  const [name, setName] = useState("");
+export function NamePromptModal({ title, placeholder, initialValue = "", submitLabel = "Create", onClose, onCreate }: Props) {
+  const [name, setName] = useState(initialValue);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -37,7 +39,7 @@ export function NamePromptModal({ title, placeholder, onClose, onCreate }: Props
             type="submit"
             className="w-full bg-[var(--accent)] text-white font-medium rounded-lg py-2 text-sm hover:opacity-90"
           >
-            Create
+            {submitLabel}
           </button>
         </form>
       </div>

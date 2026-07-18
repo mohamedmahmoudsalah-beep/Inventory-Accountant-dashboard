@@ -1,58 +1,109 @@
-import { Download, Trash2 } from "lucide-react";
-import type { DataRow, PivotAgg, PivotConfig } from "../types";
+import { useState } from "react";
+import { Download, Trash2, Settings2, Plus, X, ArrowUpDown } from "lucide-react";
+import type { DataRow, Measure, PivotConfig, PivotValueMetric } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
+import { aggregateColumn } from "../lib/aggregate";
 
 interface Props {
   config: PivotConfig;
   rows: DataRow[];
   columns: string[];
+  measures: Measure[];
   canEdit: boolean;
   canExport?: boolean;
   onChange: (config: PivotConfig) => void;
   onRemove: () => void;
 }
 
-function aggregate(values: number[], agg: PivotAgg): number {
-  if (values.length === 0) return 0;
-  switch (agg) {
-    case "sum": return values.reduce((a, b) => a + b, 0);
-    case "avg": return values.reduce((a, b) => a + b, 0) / values.length;
-    case "count": return values.length;
-    case "max": return Math.max(...values);
-    case "min": return Math.min(...values);
+function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measure[]): number {
+  const source = metric.source;
+  if (source.kind === "column") {
+    return aggregateColumn(rows, source.column, source.agg);
   }
+  const measure = measures.find((m) => m.id === source.measureId);
+  if (!measure) return 0;
+  return aggregateColumn(rows, measure.column, measure.agg, measure.conditionColumn, measure.conditionValue);
 }
 
-export function PivotCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove }: Props) {
-  const groupCols = config.groupCols.filter(Boolean);
-  const groups = new Map<string, { keys: string[]; values: number[] }>();
+export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove }: Props) {
+  const [showEditor, setShowEditor] = useState(false);
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
 
+  const groupCols = config.groupCols.filter(Boolean);
+  const values = config.values.length > 0 ? config.values : [];
+
+  const groups = new Map<string, { keys: string[]; rows: DataRow[] }>();
   rows.forEach((row) => {
     const keys = groupCols.map((c) => String(row[c] ?? ""));
-    const groupKey = keys.join(" ▸ ");
-    if (!groups.has(groupKey)) groups.set(groupKey, { keys, values: [] });
-    groups.get(groupKey)!.values.push(Number(row[config.valueCol]) || 0);
+    const key = keys.join(" \u25b8 ");
+    if (!groups.has(key)) groups.set(key, { keys, rows: [] });
+    groups.get(key)!.rows.push(row);
   });
 
   let result = Array.from(groups.values()).map((g) => ({
     keys: g.keys,
-    value: aggregate(g.values, config.agg),
+    metrics: values.map((v) => metricValue(g.rows, v, measures)),
   }));
 
-  result.sort((a, b) => (config.sortDir === "desc" ? b.value - a.value : a.value - b.value));
+  const sortMetricIdx = Math.max(0, values.findIndex((v) => v.id === config.sortByValueId));
+  result.sort((a, b) =>
+    config.sortDir === "desc"
+      ? (b.metrics[sortMetricIdx] ?? 0) - (a.metrics[sortMetricIdx] ?? 0)
+      : (a.metrics[sortMetricIdx] ?? 0) - (b.metrics[sortMetricIdx] ?? 0)
+  );
   result = result.slice(0, config.limit);
+
+  if (sortCol) {
+    const colIdx = groupCols.indexOf(sortCol);
+    const valIdx = values.findIndex((v) => v.label === sortCol);
+    result = [...result].sort((a, b) => {
+      if (colIdx >= 0) return a.keys[colIdx].localeCompare(b.keys[colIdx]) * sortDir;
+      if (valIdx >= 0) return ((a.metrics[valIdx] ?? 0) - (b.metrics[valIdx] ?? 0)) * sortDir;
+      return 0;
+    });
+  }
+
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir((d) => (d === 1 ? -1 : 1));
+    else { setSortCol(col); setSortDir(1); }
+  }
 
   const exportRows: DataRow[] = result.map((r) => {
     const row: DataRow = {};
     groupCols.forEach((c, i) => (row[c] = r.keys[i]));
-    row[`${config.agg}_${config.valueCol}`] = r.value;
+    values.forEach((v, i) => (row[v.label] = r.metrics[i]));
     return row;
   });
 
-  function updateGroupCol(index: number, col: string) {
+  function addGroupCol() {
+    const unused = columns.find((c) => !groupCols.includes(c)) ?? columns[0];
+    onChange({ ...config, groupCols: [...config.groupCols, unused] });
+  }
+  function updateGroupCol(i: number, col: string) {
     const next = [...config.groupCols];
-    next[index] = col;
+    next[i] = col;
     onChange({ ...config, groupCols: next });
+  }
+  function removeGroupCol(i: number) {
+    onChange({ ...config, groupCols: config.groupCols.filter((_, idx) => idx !== i) });
+  }
+
+  function addValue() {
+    const metric: PivotValueMetric = {
+      id: crypto.randomUUID(),
+      label: columns[1] ?? columns[0],
+      source: { kind: "column", column: columns[1] ?? columns[0], agg: "sum" },
+    };
+    onChange({ ...config, values: [...config.values, metric] });
+  }
+  function updateValue(i: number, metric: PivotValueMetric) {
+    const next = [...config.values];
+    next[i] = metric;
+    onChange({ ...config, values: next });
+  }
+  function removeValue(i: number) {
+    onChange({ ...config, values: config.values.filter((_, idx) => idx !== i) });
   }
 
   return (
@@ -69,61 +120,28 @@ export function PivotCard({ config, rows, columns, canEdit, canExport = true, on
         )}
         <div className="flex items-center gap-1 shrink-0">
           {canExport && (
-            <button
-              onClick={() => exportRowsToExcel(exportRows, config.title.replace(/\s+/g, "_"))}
-              title="Export to Excel"
-              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
-            >
+            <button onClick={() => exportRowsToExcel(exportRows, config.title.replace(/\s+/g, "_"))} title="Export to Excel"
+              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">
               <Download size={14} />
             </button>
           )}
           {canEdit && (
-            <button
-              onClick={onRemove}
-              title="Remove pivot"
-              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]"
-            >
-              <Trash2 size={14} />
-            </button>
+            <>
+              <button onClick={() => setShowEditor((s) => !s)} title="Edit"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">
+                <Settings2 size={14} />
+              </button>
+              <button onClick={onRemove} title="Remove"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]">
+                <Trash2 size={14} />
+              </button>
+            </>
           )}
         </div>
       </div>
 
       {canEdit && (
-        <div className="flex flex-wrap gap-2 mb-3 text-xs">
-          <select
-            value={config.groupCols[0] ?? columns[0]}
-            onChange={(e) => updateGroupCol(0, e.target.value)}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
-            value={config.groupCols[1] ?? ""}
-            onChange={(e) => updateGroupCol(1, e.target.value)}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="">+ sub-group (optional)</option>
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
-            value={config.valueCol}
-            onChange={(e) => onChange({ ...config, valueCol: e.target.value })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
-            value={config.agg}
-            onChange={(e) => onChange({ ...config, agg: e.target.value as PivotAgg })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="sum">Sum</option>
-            <option value="avg">Average</option>
-            <option value="count">Count</option>
-            <option value="max">Max</option>
-            <option value="min">Min</option>
-          </select>
+        <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
           <select
             value={config.sortDir}
             onChange={(e) => onChange({ ...config, sortDir: e.target.value as "desc" | "asc" })}
@@ -133,12 +151,89 @@ export function PivotCard({ config, rows, columns, canEdit, canExport = true, on
             <option value="asc">Bottom</option>
           </select>
           <input
-            type="number"
-            min={1}
-            value={config.limit}
+            type="number" min={1} value={config.limit}
             onChange={(e) => onChange({ ...config, limit: Math.max(1, Number(e.target.value) || 1) })}
             className="w-14 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           />
+          {values.length > 1 && (
+            <select
+              value={config.sortByValueId ?? values[0]?.id}
+              onChange={(e) => onChange({ ...config, sortByValueId: e.target.value })}
+              className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            >
+              {values.map((v) => <option key={v.id} value={v.id}>by {v.label}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
+      {canEdit && showEditor && (
+        <div className="mb-3 p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] space-y-3 text-xs">
+          <div>
+            <p className="text-[var(--text-dim)] mb-1.5">Group by (rows)</p>
+            <div className="space-y-1.5">
+              {config.groupCols.map((c, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <select value={c} onChange={(e) => updateGroupCol(i, e.target.value)}
+                    className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+                    {columns.map((col) => <option key={col} value={col}>{col}</option>)}
+                  </select>
+                  <button onClick={() => removeGroupCol(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
+                </div>
+              ))}
+              <button onClick={addGroupCol} className="flex items-center gap-1 text-[var(--accent)] hover:opacity-80">
+                <Plus size={12} /> Add group column
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[var(--text-dim)] mb-1.5">Values</p>
+            <div className="space-y-1.5">
+              {config.values.map((v, i) => (
+                <div key={v.id} className="flex items-center gap-1.5 flex-wrap">
+                  <select
+                    value={v.source.kind === "measure" ? `measure:${v.source.measureId}` : `column:${v.source.column}:${v.source.agg}`}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.startsWith("measure:")) {
+                        const measureId = val.slice("measure:".length);
+                        const m = measures.find((mm) => mm.id === measureId);
+                        updateValue(i, { ...v, label: m?.name ?? v.label, source: { kind: "measure", measureId } });
+                      } else {
+                        const [, col, agg] = val.split(":");
+                        updateValue(i, { ...v, label: `${agg} ${col}`, source: { kind: "column", column: col, agg: agg as PivotValueMetric["source"] extends { agg: infer A } ? A : never } });
+                      }
+                    }}
+                    className="flex-1 min-w-[160px] bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                  >
+                    <optgroup label="Columns">
+                      {columns.flatMap((col) =>
+                        (["sum", "avg", "count", "max", "min"] as const).map((agg) => (
+                          <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
+                        ))
+                      )}
+                    </optgroup>
+                    {measures.length > 0 && (
+                      <optgroup label="Measures">
+                        {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>\u2605 {m.name}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                  <input
+                    value={v.label}
+                    onChange={(e) => updateValue(i, { ...v, label: e.target.value })}
+                    className="w-28 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                    placeholder="label"
+                  />
+                  <button onClick={() => removeValue(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
+                </div>
+              ))}
+              <button onClick={addValue} className="flex items-center gap-1 text-[var(--accent)] hover:opacity-80">
+                <Plus size={12} /> Add value
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -147,22 +242,28 @@ export function PivotCard({ config, rows, columns, canEdit, canExport = true, on
           <thead>
             <tr className="border-b border-[var(--border)]">
               {groupCols.map((c) => (
-                <th key={c} className="text-left px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)]">{c}</th>
+                <th key={c} onClick={() => toggleSort(c)}
+                  className="text-left px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)] cursor-pointer select-none">
+                  <span className="inline-flex items-center gap-1">{c} <ArrowUpDown size={10} /></span>
+                </th>
               ))}
-              <th className="text-right px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)]">
-                {config.agg} {config.valueCol}
-              </th>
+              {values.map((v) => (
+                <th key={v.id} onClick={() => toggleSort(v.label)}
+                  className="text-right px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)] cursor-pointer select-none">
+                  <span className="inline-flex items-center gap-1">{v.label} <ArrowUpDown size={10} /></span>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {result.map((r, i) => (
               <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
-                {r.keys.map((k, j) => (
-                  <td key={j} className="px-2 py-1.5 text-[var(--text)]">{k}</td>
+                {r.keys.map((k, j) => <td key={j} className="px-2 py-1.5 text-[var(--text)]">{k}</td>)}
+                {r.metrics.map((m, j) => (
+                  <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
+                    {m.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </td>
                 ))}
-                <td className="px-2 py-1.5 text-right num text-[var(--text)]">
-                  {r.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </td>
               </tr>
             ))}
           </tbody>

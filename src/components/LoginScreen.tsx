@@ -17,7 +17,7 @@ export function LoginScreen() {
           <div className="w-11 h-11 rounded-xl overflow-hidden">
             <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
           </div>
-          <span className="text-xl font-semibold text-[var(--text-h)]">Breadfast Insights</span>
+          <span className="text-lg font-semibold text-[var(--text-h)] text-center">General Report Inventory Accountant team</span>
         </div>
 
         <form

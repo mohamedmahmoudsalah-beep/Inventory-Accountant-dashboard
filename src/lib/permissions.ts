@@ -5,9 +5,9 @@ export function canManageUsers(role?: Role): boolean {
   return role === "admin";
 }
 
-/** Add/remove teams and task pages. */
+/** Add/remove/rename teams and task pages. */
 export function canManageStructure(role?: Role): boolean {
-  return role === "admin";
+  return role === "admin" || role === "manager";
 }
 
 /** Connect/import/combine/refresh data sources for a page. */

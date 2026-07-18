@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine } from "lucide-react";
+import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma } from "lucide-react";
 import type { DataRow, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
 import { canManageDataSources } from "../lib/permissions";
@@ -21,9 +21,10 @@ interface Props {
   onRefresh: () => void;
   onConnectSheet: (url: string, tabTitle?: string, sourceType?: "csv-link" | "drive") => void;
   onImportData: (rows: DataRow[], columns: string[]) => void;
+  onOpenDataModel: () => void;
 }
 
-export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData }: Props) {
+export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel }: Props) {
   const { user } = useAuth();
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -147,6 +148,12 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
                 className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-raised)]"
               >
                 <Link2 size={14} /> {page.sheetUrl ? "Edit sheet link" : "Paste sheet link"}
+              </button>
+              <button
+                onClick={onOpenDataModel}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-raised)]"
+              >
+                <Sigma size={14} /> Data model
               </button>
             </>
           )}

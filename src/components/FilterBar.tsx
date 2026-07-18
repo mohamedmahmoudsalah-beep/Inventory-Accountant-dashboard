@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Plus, X, CalendarRange } from "lucide-react";
 import type { DataRow, FilterConfig } from "../types";
 
@@ -10,6 +11,8 @@ interface Props {
 }
 
 export function FilterBar({ columns, rows, filters, onChange, readOnly = false }: Props) {
+  const [showAddMenu, setShowAddMenu] = useState(false);
+
   function addFilter() {
     const unused = columns.find((c) => !filters.some((f) => f.column === c));
     if (!unused) return;
@@ -97,21 +100,32 @@ export function FilterBar({ columns, rows, filters, onChange, readOnly = false }
         </div>
       ))}
 
-      {!readOnly && filters.length < columns.length && (
-        <button
-          onClick={addFilter}
-          className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)]"
-        >
-          <Plus size={13} /> Add filter
-        </button>
-      )}
       {!readOnly && (
-        <button
-          onClick={addDateRangeFilter}
-          className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)]"
-        >
-          <CalendarRange size={13} /> Add date range
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setShowAddMenu((s) => !s)}
+            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)]"
+          >
+            <Plus size={13} /> Add filter
+          </button>
+          {showAddMenu && (
+            <div className="absolute top-full left-0 mt-1 bg-[var(--panel)] border border-[var(--border)] rounded-lg shadow-xl z-20 min-w-[160px] py-1">
+              <button
+                onClick={() => { addFilter(); setShowAddMenu(false); }}
+                disabled={filters.length >= columns.length}
+                className="w-full text-left px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--panel-raised)] disabled:opacity-40"
+              >
+                Dropdown filter
+              </button>
+              <button
+                onClick={() => { addDateRangeFilter(); setShowAddMenu(false); }}
+                className="w-full text-left px-3 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--panel-raised)] flex items-center gap-1.5"
+              >
+                <CalendarRange size={12} /> Date range
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -5,7 +5,7 @@ export interface AllowedUser {
   role: Role;
 }
 
-export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar";
+export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar" | "treemap";
 
 export interface ChartConfig {
   id: string;
@@ -13,6 +13,7 @@ export interface ChartConfig {
   type: ChartType;
   xKey: string;
   yKey: string;
+  showValues?: boolean;
 }
 
 export interface FilterConfig {
@@ -29,14 +30,63 @@ export interface DataRow {
 
 export type PivotAgg = "sum" | "avg" | "count" | "max" | "min";
 
+/** A value can come straight from a column+aggregation, or reuse a saved Measure. */
+export type ValueSource =
+  | { kind: "column"; column: string; agg: PivotAgg }
+  | { kind: "measure"; measureId: string };
+
+export interface PivotValueMetric {
+  id: string;
+  label: string;
+  source: ValueSource;
+}
+
 export interface PivotConfig {
   id: string;
   title: string;
-  groupCols: string[]; // 1-2 columns to group by (nested)
-  valueCol: string;
-  agg: PivotAgg;
+  groupCols: string[]; // any number of columns to group by (nested rows)
+  values: PivotValueMetric[]; // one or more aggregated value columns
+  sortByValueId?: string; // which value metric drives Top/Bottom N; defaults to values[0]
   sortDir: "desc" | "asc";
   limit: number; // Top/Bottom N
+}
+
+export interface MatrixConfig {
+  id: string;
+  title: string;
+  rowCol: string;
+  colCol: string;
+  value: ValueSource;
+}
+
+export interface CardConfig {
+  id: string;
+  title: string;
+  value: ValueSource;
+}
+
+export interface TextConfig {
+  id: string;
+  title: string;
+  body: string;
+  imageUrl?: string;
+}
+
+/** A reusable named aggregation (optionally conditional, like a simple SUMIF), 
+ *  selectable wherever a value column can be picked. */
+export interface Measure {
+  id: string;
+  name: string;
+  column: string;
+  agg: PivotAgg;
+  conditionColumn?: string;
+  conditionValue?: string;
+}
+
+export interface CalculatedColumn {
+  id: string;
+  name: string;
+  formula: string;
 }
 
 export interface TaskPage {
@@ -46,10 +96,15 @@ export interface TaskPage {
   sheetUrl: string;
   sheetTabTitle?: string;
   lastUpdated: string | null;
-  rows: DataRow[];
-  columns: string[];
+  rows: DataRow[]; // raw rows as fetched/imported (calculated columns are derived, not stored here)
+  columns: string[]; // raw column names
   charts: ChartConfig[];
   pivots: PivotConfig[];
+  matrices: MatrixConfig[];
+  cards: CardConfig[];
+  texts: TextConfig[];
+  measures: Measure[];
+  calculatedColumns: CalculatedColumn[];
   activeFilters: FilterConfig[];
 }
 

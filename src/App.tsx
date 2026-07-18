@@ -7,17 +7,26 @@ import { TopBar } from "./components/TopBar";
 import { FilterBar } from "./components/FilterBar";
 import { ChartCard } from "./components/ChartCard";
 import { PivotCard } from "./components/PivotCard";
+import { MatrixCard } from "./components/MatrixCard";
+import { CardWidget } from "./components/CardWidget";
+import { TextWidget } from "./components/TextWidget";
 import { WidgetShell } from "./components/WidgetShell";
 import { DataTable } from "./components/DataTable";
 import { AIAssistant } from "./components/AIAssistant";
 import { NamePromptModal } from "./components/NamePromptModal";
 import { DataSourcesView } from "./components/DataSourcesView";
 import { UserManagement } from "./components/UserManagement";
-import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
+import { DataModelPanel } from "./components/DataModelPanel";
 import { fetchSheetAsRows } from "./lib/sheets";
-import { sampleRows, sampleColumns } from "./data/sampleData";
 import { loadRemoteState, saveRemoteState, subscribeToRemoteState } from "./lib/remoteState";
-import type { ChartConfig, DataRow, Department, FilterConfig, PivotConfig, TaskPage } from "./types";
+import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
+import { applyCalculatedColumns } from "./lib/calculatedColumns";
+import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
+import { getStoredTheme, applyTheme, type Theme } from "./lib/theme";
+import type {
+  CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig,
+  MatrixConfig, Measure, PivotConfig, TextConfig, TaskPage,
+} from "./types";
 
 function makeDefaultPage(id: string, name: string): TaskPage {
   return {
@@ -26,13 +35,15 @@ function makeDefaultPage(id: string, name: string): TaskPage {
     sourceType: "manual",
     sheetUrl: "",
     lastUpdated: null,
-    rows: sampleRows,
-    columns: sampleColumns,
-    charts: [
-      { id: crypto.randomUUID(), title: "Revenue by month", type: "bar", xKey: "month", yKey: "revenue" },
-      { id: crypto.randomUUID(), title: "Orders by region", type: "pie", xKey: "region", yKey: "orders" },
-    ],
+    rows: [],
+    columns: [],
+    charts: [],
     pivots: [],
+    matrices: [],
+    cards: [],
+    texts: [],
+    measures: [],
+    calculatedColumns: [],
     activeFilters: [],
   };
 }
@@ -49,7 +60,7 @@ function passesFilter(row: DataRow, f: FilterConfig): boolean {
   if (f.mode === "range") {
     const raw = row[f.column];
     const cellDate = new Date(String(raw));
-    if (isNaN(cellDate.getTime())) return true; // can't parse - don't exclude
+    if (isNaN(cellDate.getTime())) return true;
     if (f.from) {
       const from = new Date(f.from);
       if (cellDate < from) return false;
@@ -74,11 +85,17 @@ function DashboardApp() {
   const [view, setView] = useState<"dashboard" | "dataSources" | "users">("dashboard");
   const [refreshing, setRefreshing] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
+  const [showDataModel, setShowDataModel] = useState(false);
   const [addDeptOpen, setAddDeptOpen] = useState(false);
   const [addPageForDept, setAddPageForDept] = useState<string | null>(null);
+  const [renameDept, setRenameDept] = useState<string | null>(null);
+  const [renamePageTarget, setRenamePageTarget] = useState<{ deptId: string; pageId: string } | null>(null);
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
-  // Initial load (shared via Supabase when configured, else this browser's
-  // localStorage) + live updates whenever anyone else saves changes.
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -105,10 +122,8 @@ function DashboardApp() {
     };
   }, []);
 
-  // Debounced save - avoids writing on every keystroke while editing a
-  // chart title, for example.
   useEffect(() => {
-    if (!stateReady) return; // never save the placeholder default over real data
+    if (!stateReady) return;
     const timer = setTimeout(() => {
       saveRemoteState({ departments, activeDeptId, activePageId });
     }, 600);
@@ -138,7 +153,7 @@ function DashboardApp() {
     setRefreshing(true);
     try {
       const { rows, columns } = await fetchSheetAsRows(url, tabTitle ?? activePage.sheetTabTitle);
-      updatePage({ rows, columns, lastUpdated: new Date().toISOString() });
+      updatePage({ rows: stampRowIds(rows), columns, lastUpdated: new Date().toISOString() });
     } catch (e) {
       alert(
         e instanceof Error && e.message !== "Failed to fetch"
@@ -152,7 +167,7 @@ function DashboardApp() {
 
   function handleImportData(rows: DataRow[], columns: string[]) {
     updatePage({
-      rows,
+      rows: stampRowIds(rows),
       columns,
       sourceType: "manual",
       sheetUrl: "",
@@ -161,60 +176,125 @@ function DashboardApp() {
     });
   }
 
+  function handleEditCell(rid: string, column: string, value: string) {
+    const isNumericCol = activePage.rows.some((r) => typeof r[column] === "number");
+    const parsed = isNumericCol && value.trim() !== "" && !isNaN(Number(value)) ? Number(value) : value;
+    updatePage({
+      rows: activePage.rows.map((r) => (r[ROW_ID_KEY] === rid ? { ...r, [column]: parsed } : r)),
+    });
+  }
+
+  // Calculated columns are derived on the fly from the raw rows, never stored redundantly.
+  const effective = useMemo(
+    () => applyCalculatedColumns(activePage.rows, activePage.columns, activePage.calculatedColumns),
+    [activePage.rows, activePage.columns, activePage.calculatedColumns]
+  );
+
   const filteredRows = useMemo(() => {
-    return activePage.rows.filter((row) => activePage.activeFilters.every((f) => passesFilter(row, f)));
-  }, [activePage.rows, activePage.activeFilters]);
+    return effective.rows.filter((row) => activePage.activeFilters.every((f) => passesFilter(row, f)));
+  }, [effective.rows, activePage.activeFilters]);
 
   function setFilters(filters: FilterConfig[]) {
     updatePage({ activeFilters: filters });
   }
 
+  // --- Charts ---
   function updateChart(chart: ChartConfig) {
     updatePage({ charts: activePage.charts.map((c) => (c.id === chart.id ? chart : c)) });
   }
-
   function removeChart(id: string) {
     updatePage({ charts: activePage.charts.filter((c) => c.id !== id) });
   }
-
   function addChart() {
     const newChart: ChartConfig = {
-      id: crypto.randomUUID(),
-      title: "New chart",
-      type: "bar",
-      xKey: activePage.columns[0],
-      yKey: activePage.columns[1] ?? activePage.columns[0],
+      id: crypto.randomUUID(), title: "New chart", type: "bar",
+      xKey: effective.columns[0], yKey: effective.columns[1] ?? effective.columns[0],
     };
     updatePage({ charts: [...activePage.charts, newChart] });
   }
 
+  // --- Pivots ---
   function updatePivot(pivot: PivotConfig) {
     updatePage({ pivots: activePage.pivots.map((p) => (p.id === pivot.id ? pivot : p)) });
   }
-
   function removePivot(id: string) {
     updatePage({ pivots: activePage.pivots.filter((p) => p.id !== id) });
   }
-
   function addPivot() {
     const newPivot: PivotConfig = {
-      id: crypto.randomUUID(),
-      title: "New pivot table",
-      groupCols: [activePage.columns[0]],
-      valueCol: activePage.columns[1] ?? activePage.columns[0],
-      agg: "sum",
-      sortDir: "desc",
-      limit: 10,
+      id: crypto.randomUUID(), title: "New pivot table",
+      groupCols: [effective.columns[0]],
+      values: [{ id: crypto.randomUUID(), label: `sum ${effective.columns[1] ?? effective.columns[0]}`, source: { kind: "column", column: effective.columns[1] ?? effective.columns[0], agg: "sum" } }],
+      sortDir: "desc", limit: 10,
     };
     updatePage({ pivots: [...activePage.pivots, newPivot] });
   }
 
-  // Widgets (charts + pivots) share one reorder list so drag targets can
-  // land on either kind.
-  type WidgetRef = { kind: "chart"; item: ChartConfig } | { kind: "pivot"; item: PivotConfig };
+  // --- Matrices ---
+  function updateMatrix(matrix: MatrixConfig) {
+    updatePage({ matrices: activePage.matrices.map((m) => (m.id === matrix.id ? matrix : m)) });
+  }
+  function removeMatrix(id: string) {
+    updatePage({ matrices: activePage.matrices.filter((m) => m.id !== id) });
+  }
+  function addMatrix() {
+    const newMatrix: MatrixConfig = {
+      id: crypto.randomUUID(), title: "New matrix",
+      rowCol: effective.columns[0], colCol: effective.columns[1] ?? effective.columns[0],
+      value: { kind: "column", column: effective.columns[2] ?? effective.columns[0], agg: "sum" },
+    };
+    updatePage({ matrices: [...activePage.matrices, newMatrix] });
+  }
+
+  // --- Cards ---
+  function updateCard(card: CardConfig) {
+    updatePage({ cards: activePage.cards.map((c) => (c.id === card.id ? card : c)) });
+  }
+  function removeCard(id: string) {
+    updatePage({ cards: activePage.cards.filter((c) => c.id !== id) });
+  }
+  function addCard() {
+    const newCard: CardConfig = {
+      id: crypto.randomUUID(), title: "New card",
+      value: { kind: "column", column: effective.columns[0], agg: "sum" },
+    };
+    updatePage({ cards: [...activePage.cards, newCard] });
+  }
+
+  // --- Text/image widgets ---
+  function updateText(text: TextConfig) {
+    updatePage({ texts: activePage.texts.map((t) => (t.id === text.id ? text : t)) });
+  }
+  function removeText(id: string) {
+    updatePage({ texts: activePage.texts.filter((t) => t.id !== id) });
+  }
+  function addText() {
+    const newText: TextConfig = { id: crypto.randomUUID(), title: "", body: "" };
+    updatePage({ texts: [...activePage.texts, newText] });
+  }
+
+  // --- Measures & calculated columns ---
+  function setMeasures(measures: Measure[]) {
+    updatePage({ measures });
+  }
+  function setCalculatedColumns(calculatedColumns: CalculatedColumn[]) {
+    updatePage({ calculatedColumns });
+  }
+
+  // Widgets (charts + pivots + matrices + cards + texts) share one reorder list.
+  type WidgetRef =
+    | { kind: "chart"; item: ChartConfig }
+    | { kind: "pivot"; item: PivotConfig }
+    | { kind: "matrix"; item: MatrixConfig }
+    | { kind: "card"; item: CardConfig }
+    | { kind: "text"; item: TextConfig };
+
   const widgetOrder: WidgetRef[] = [
     ...activePage.charts.map((c): WidgetRef => ({ kind: "chart", item: c })),
     ...activePage.pivots.map((p): WidgetRef => ({ kind: "pivot", item: p })),
+    ...activePage.matrices.map((m): WidgetRef => ({ kind: "matrix", item: m })),
+    ...activePage.cards.map((c): WidgetRef => ({ kind: "card", item: c })),
+    ...activePage.texts.map((t): WidgetRef => ({ kind: "text", item: t })),
   ];
 
   function reorderWidgets(draggedId: string, targetId: string) {
@@ -228,9 +308,13 @@ function DashboardApp() {
     updatePage({
       charts: reordered.filter((w): w is { kind: "chart"; item: ChartConfig } => w.kind === "chart").map((w) => w.item),
       pivots: reordered.filter((w): w is { kind: "pivot"; item: PivotConfig } => w.kind === "pivot").map((w) => w.item),
+      matrices: reordered.filter((w): w is { kind: "matrix"; item: MatrixConfig } => w.kind === "matrix").map((w) => w.item),
+      cards: reordered.filter((w): w is { kind: "card"; item: CardConfig } => w.kind === "card").map((w) => w.item),
+      texts: reordered.filter((w): w is { kind: "text"; item: TextConfig } => w.kind === "text").map((w) => w.item),
     });
   }
 
+  // --- Team/page structure: add, rename, delete ---
   function addDepartment(name: string) {
     const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
     const dept = makeDefaultDepartment(id, name);
@@ -251,6 +335,50 @@ function DashboardApp() {
     setView("dashboard");
   }
 
+  function renameDepartmentTo(deptId: string, name: string) {
+    setDepartments((ds) => ds.map((d) => (d.id === deptId ? { ...d, name } : d)));
+    setRenameDept(null);
+  }
+
+  function deleteDepartment(deptId: string) {
+    if (departments.length <= 1) {
+      alert("You need at least one team.");
+      return;
+    }
+    if (!confirm("Delete this team and all its pages? This can't be undone.")) return;
+    setDepartments((ds) => {
+      const next = ds.filter((d) => d.id !== deptId);
+      if (activeDeptId === deptId) {
+        setActiveDeptId(next[0].id);
+        setActivePageId(next[0].pages[0].id);
+      }
+      return next;
+    });
+  }
+
+  function renamePageTo(deptId: string, pageId: string, name: string) {
+    setDepartments((ds) =>
+      ds.map((d) => (d.id === deptId ? { ...d, pages: d.pages.map((p) => (p.id === pageId ? { ...p, name } : p)) } : d))
+    );
+    setRenamePageTarget(null);
+  }
+
+  function deletePage(deptId: string, pageId: string) {
+    const dept = departments.find((d) => d.id === deptId);
+    if (!dept || dept.pages.length <= 1) {
+      alert("A team needs at least one page.");
+      return;
+    }
+    if (!confirm("Delete this page? This can't be undone.")) return;
+    setDepartments((ds) =>
+      ds.map((d) => (d.id === deptId ? { ...d, pages: d.pages.filter((p) => p.id !== pageId) } : d))
+    );
+    if (activePageId === pageId) {
+      const remaining = dept.pages.filter((p) => p.id !== pageId);
+      setActivePageId(remaining[0].id);
+    }
+  }
+
   const canEdit = canEditWidgets(user?.role);
   const canExportData = canExportPerm(user?.role);
   const canFilter = canUseFilters(user?.role);
@@ -263,6 +391,11 @@ function DashboardApp() {
     );
   }
 
+  const currentDeptForRename = renameDept ? departments.find((d) => d.id === renameDept) : null;
+  const currentPageForRename = renamePageTarget
+    ? departments.find((d) => d.id === renamePageTarget.deptId)?.pages.find((p) => p.id === renamePageTarget.pageId)
+    : null;
+
   return (
     <div className="flex bg-[var(--bg)] min-h-svh">
       <Sidebar
@@ -271,6 +404,8 @@ function DashboardApp() {
         activePageId={activePageId}
         showingDataSources={view === "dataSources"}
         showingUsers={view === "users"}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onSelectPage={(deptId, pageId) => {
           setActiveDeptId(deptId);
           setActivePageId(pageId);
@@ -280,6 +415,10 @@ function DashboardApp() {
         onSelectUsers={() => setView("users")}
         onAddDepartment={() => setAddDeptOpen(true)}
         onAddPage={(deptId) => setAddPageForDept(deptId)}
+        onRenameDepartment={(deptId) => setRenameDept(deptId)}
+        onDeleteDepartment={deleteDepartment}
+        onRenamePage={(deptId, pageId) => setRenamePageTarget({ deptId, pageId })}
+        onDeletePage={deletePage}
         onOpenAssistant={() => setShowAssistant(true)}
       />
 
@@ -296,63 +435,97 @@ function DashboardApp() {
               onRefresh={() => loadSheet(activePage.sheetUrl)}
               onConnectSheet={handleConnectSheet}
               onImportData={handleImportData}
+              onOpenDataModel={() => setShowDataModel(true)}
             />
 
             <FilterBar
-              columns={activePage.columns}
-              rows={activePage.rows}
+              columns={effective.columns}
+              rows={effective.rows}
               filters={activePage.activeFilters}
               onChange={setFilters}
               readOnly={!canFilter}
             />
 
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activePage.charts.map((chart) => (
-                  <WidgetShell key={chart.id} id={chart.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                    <ChartCard
-                      config={chart}
-                      rows={filteredRows}
-                      columns={activePage.columns}
-                      canEdit={canEdit}
-                      canExport={canExportData}
-                      onChange={updateChart}
-                      onRemove={() => removeChart(chart.id)}
-                    />
-                  </WidgetShell>
-                ))}
-                {activePage.pivots.map((pivot) => (
-                  <WidgetShell key={pivot.id} id={pivot.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                    <PivotCard
-                      config={pivot}
-                      rows={filteredRows}
-                      columns={activePage.columns}
-                      canEdit={canEdit}
-                      canExport={canExportData}
-                      onChange={updatePivot}
-                      onRemove={() => removePivot(pivot.id)}
-                    />
-                  </WidgetShell>
-                ))}
-                {canEdit && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={addChart}
-                      className="flex-1 flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm"
-                    >
-                      <Plus size={15} /> Add chart
-                    </button>
-                    <button
-                      onClick={addPivot}
-                      className="flex-1 flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm"
-                    >
-                      <Plus size={15} /> Add pivot table
-                    </button>
-                  </div>
-                )}
-              </div>
+              {effective.columns.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--text-dim)]">
+                  No data yet — connect a Google Sheet, import a file, or combine online sheets above to get started.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {activePage.charts.map((chart) => (
+                    <WidgetShell key={chart.id} id={chart.id} canEdit={canEdit} onReorder={reorderWidgets}>
+                      <ChartCard
+                        config={chart} rows={filteredRows} columns={effective.columns}
+                        canEdit={canEdit} canExport={canExportData}
+                        onChange={updateChart} onRemove={() => removeChart(chart.id)}
+                      />
+                    </WidgetShell>
+                  ))}
+                  {activePage.pivots.map((pivot) => (
+                    <WidgetShell key={pivot.id} id={pivot.id} canEdit={canEdit} onReorder={reorderWidgets}>
+                      <PivotCard
+                        config={pivot} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                        canEdit={canEdit} canExport={canExportData}
+                        onChange={updatePivot} onRemove={() => removePivot(pivot.id)}
+                      />
+                    </WidgetShell>
+                  ))}
+                  {activePage.matrices.map((matrix) => (
+                    <WidgetShell key={matrix.id} id={matrix.id} canEdit={canEdit} onReorder={reorderWidgets}>
+                      <MatrixCard
+                        config={matrix} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                        canEdit={canEdit} canExport={canExportData}
+                        onChange={updateMatrix} onRemove={() => removeMatrix(matrix.id)}
+                      />
+                    </WidgetShell>
+                  ))}
+                  {activePage.cards.map((card) => (
+                    <WidgetShell key={card.id} id={card.id} canEdit={canEdit} onReorder={reorderWidgets}>
+                      <CardWidget
+                        config={card} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                        canEdit={canEdit}
+                        onChange={updateCard} onRemove={() => removeCard(card.id)}
+                      />
+                    </WidgetShell>
+                  ))}
+                  {activePage.texts.map((text) => (
+                    <WidgetShell key={text.id} id={text.id} canEdit={canEdit} onReorder={reorderWidgets}>
+                      <TextWidget config={text} canEdit={canEdit} onChange={updateText} onRemove={() => removeText(text.id)} />
+                    </WidgetShell>
+                  ))}
+                  {canEdit && (
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={addChart} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                        <Plus size={15} /> Chart
+                      </button>
+                      <button onClick={addPivot} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                        <Plus size={15} /> Pivot table
+                      </button>
+                      <button onClick={addMatrix} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                        <Plus size={15} /> Matrix
+                      </button>
+                      <button onClick={addCard} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                        <Plus size={15} /> Card
+                      </button>
+                      <button onClick={addText} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                        <Plus size={15} /> Text/Image
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
-              <DataTable rows={filteredRows} columns={activePage.columns} canExport={canExportData} />
+              {effective.columns.length > 0 && (
+                <DataTable
+                  rows={filteredRows}
+                  columns={effective.columns}
+                  editableColumns={activePage.columns}
+                  canExport={canExportData}
+                  canEdit={canEdit}
+                  onEditCell={handleEditCell}
+                />
+              )}
             </div>
           </>
         )}
@@ -362,26 +535,38 @@ function DashboardApp() {
         <AIAssistant
           departmentName={`${activeDept.name} — ${activePage.name}`}
           rows={filteredRows}
-          columns={activePage.columns}
+          columns={effective.columns}
           onClose={() => setShowAssistant(false)}
         />
       )}
 
-      {addDeptOpen && (
-        <NamePromptModal
-          title="New team"
-          placeholder="e.g. Marketing, Operations..."
-          onClose={() => setAddDeptOpen(false)}
-          onCreate={addDepartment}
+      {showDataModel && (
+        <DataModelPanel
+          columns={activePage.columns}
+          measures={activePage.measures}
+          calculatedColumns={activePage.calculatedColumns}
+          onChangeMeasures={setMeasures}
+          onChangeCalculatedColumns={setCalculatedColumns}
+          onClose={() => setShowDataModel(false)}
         />
       )}
 
+      {addDeptOpen && (
+        <NamePromptModal title="New team" placeholder="e.g. Marketing, Operations..." onClose={() => setAddDeptOpen(false)} onCreate={addDepartment} />
+      )}
       {addPageForDept && (
+        <NamePromptModal title="New task page" placeholder="e.g. Weekly targets, Regional breakdown..." onClose={() => setAddPageForDept(null)} onCreate={(name) => addPage(addPageForDept, name)} />
+      )}
+      {currentDeptForRename && (
         <NamePromptModal
-          title="New task page"
-          placeholder="e.g. Weekly targets, Regional breakdown..."
-          onClose={() => setAddPageForDept(null)}
-          onCreate={(name) => addPage(addPageForDept, name)}
+          title="Rename team" placeholder="Team name" initialValue={currentDeptForRename.name} submitLabel="Save"
+          onClose={() => setRenameDept(null)} onCreate={(name) => renameDepartmentTo(currentDeptForRename.id, name)}
+        />
+      )}
+      {currentPageForRename && renamePageTarget && (
+        <NamePromptModal
+          title="Rename page" placeholder="Page name" initialValue={currentPageForRename.name} submitLabel="Save"
+          onClose={() => setRenamePageTarget(null)} onCreate={(name) => renamePageTo(renamePageTarget.deptId, renamePageTarget.pageId, name)}
         />
       )}
     </div>

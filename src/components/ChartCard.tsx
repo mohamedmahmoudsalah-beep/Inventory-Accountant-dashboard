@@ -1,11 +1,12 @@
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
   ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+  Treemap, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, LabelList,
 } from "recharts";
 import { Download, Trash2 } from "lucide-react";
 import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
+import { parseNumeric } from "../lib/numeric";
 
 const COLORS = ["#c81e94", "#57c99a", "#e94fb0", "#7aa2e8", "#f2b807", "#8a5fd6"];
 
@@ -27,12 +28,17 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
   const aggregated = Object.values(
     rows.reduce<Record<string, DataRow>>((acc, row) => {
       const key = String(row[config.xKey]);
-      const yVal = Number(row[config.yKey]) || 0;
+      const yVal = parseNumeric(row[config.yKey]);
       if (!acc[key]) acc[key] = { [config.xKey]: key, [config.yKey]: 0 };
       acc[key][config.yKey] = (acc[key][config.yKey] as number) + yVal;
       return acc;
     }, {})
   );
+
+  const treemapData = aggregated.map((row) => ({
+    name: String(row[config.xKey]),
+    size: Number(row[config.yKey]) || 0,
+  }));
 
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col">
@@ -69,7 +75,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
       </div>
 
       {canEdit && (
-        <div className="flex flex-wrap gap-2 mb-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
           <select
             value={config.type}
             onChange={(e) => onChange({ ...config, type: e.target.value as ChartConfig["type"] })}
@@ -81,6 +87,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             <option value="pie">Pie</option>
             <option value="scatter">Scatter</option>
             <option value="radar">Radar</option>
+            <option value="treemap">Treemap</option>
           </select>
           <select
             value={config.xKey}
@@ -96,6 +103,16 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           >
             {columns.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+          {config.type !== "treemap" && config.type !== "pie" && (
+            <label className="flex items-center gap-1 text-[var(--text-dim)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config.showValues ?? false}
+                onChange={(e) => onChange({ ...config, showValues: e.target.checked })}
+              />
+              Show values
+            </label>
+          )}
         </div>
       )}
 
@@ -107,7 +124,9 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey={config.yKey} fill="var(--accent)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey={config.yKey} fill="var(--accent)" radius={[4, 4, 0, 0]}>
+                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+              </Bar>
             </BarChart>
           ) : config.type === "line" ? (
             <LineChart data={aggregated}>
@@ -115,7 +134,9 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Line type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }}>
+                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+              </Line>
             </LineChart>
           ) : config.type === "area" ? (
             <AreaChart data={aggregated}>
@@ -129,7 +150,9 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Area type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} fill="url(#areaFill)" />
+              <Area type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} fill="url(#areaFill)">
+                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+              </Area>
             </AreaChart>
           ) : config.type === "scatter" ? (
             <ScatterChart>
@@ -147,6 +170,10 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <Tooltip contentStyle={tooltipStyle} />
               <Radar dataKey={config.yKey} stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.4} />
             </RadarChart>
+          ) : config.type === "treemap" ? (
+            <Treemap data={treemapData} dataKey="size" stroke="var(--panel)" fill="var(--accent)">
+              <Tooltip contentStyle={tooltipStyle} />
+            </Treemap>
           ) : (
             <PieChart>
               <Tooltip contentStyle={tooltipStyle} />
