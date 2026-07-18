@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { AllowedUser, Role } from "../types";
-import { getSupabase, isSupabaseConfigured } from "./supabase";
+import { getSupabase } from "./supabase";
 
 // When Supabase is configured (see README.md "Setting up shared storage"),
 // the user allow-list lives in a real shared database — every browser and
@@ -38,14 +38,16 @@ function saveLocalUsers(users: AllowedUser[]) {
 }
 
 async function fetchSupabaseUsers(): Promise<AllowedUser[]> {
-  const supabase = getSupabase()!;
+  const supabase = getSupabase();
+  if (!supabase) return [];
   const { data, error } = await supabase.from(USERS_TABLE).select("email, role").order("email");
   if (error || !data || data.length === 0) return [];
   return data as AllowedUser[];
 }
 
 async function seedSupabaseUsersIfEmpty() {
-  const supabase = getSupabase()!;
+  const supabase = getSupabase();
+  if (!supabase) return;
   const { count } = await supabase.from(USERS_TABLE).select("*", { count: "exact", head: true });
   if (!count) {
     await supabase.from(USERS_TABLE).insert(DEFAULT_USERS);
@@ -71,13 +73,13 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AllowedUser | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const shared = isSupabaseConfigured();
+  const shared = Boolean(getSupabase());
   const [users, setUsers] = useState<AllowedUser[]>(shared ? [] : loadLocalUsers());
   const [usersLoading, setUsersLoading] = useState(shared);
 
   useEffect(() => {
-    if (!shared) return;
-    const supabase = getSupabase()!;
+    const supabase = getSupabase();
+    if (!supabase) return;
     let cancelled = false;
 
     (async () => {
@@ -129,9 +131,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (shared) {
-      const supabase = getSupabase()!;
-      const { error } = await supabase.from(USERS_TABLE).insert({ email: clean, role });
-      if (error) return { ok: false, message: error.message };
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase.from(USERS_TABLE).insert({ email: clean, role });
+        if (error) return { ok: false, message: error.message };
+      }
       // Realtime subscription will refresh `users`, but update optimistically too.
       setUsers((prev) => [...prev, { email: clean, role }]);
     } else {
@@ -148,9 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (shared) {
-      const supabase = getSupabase()!;
-      const { error } = await supabase.from(USERS_TABLE).update({ role }).eq("email", email);
-      if (error) return { ok: false, message: error.message };
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase.from(USERS_TABLE).update({ role }).eq("email", email);
+        if (error) return { ok: false, message: error.message };
+      }
     }
     setUsers((prev) => prev.map((u) => (u.email === email ? { ...u, role } : u)));
     return { ok: true };
@@ -167,9 +173,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (shared) {
-      const supabase = getSupabase()!;
-      const { error } = await supabase.from(USERS_TABLE).delete().eq("email", email);
-      if (error) return { ok: false, message: error.message };
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase.from(USERS_TABLE).delete().eq("email", email);
+        if (error) return { ok: false, message: error.message };
+      }
     }
     setUsers((prev) => prev.filter((u) => u.email !== email));
     return { ok: true };
