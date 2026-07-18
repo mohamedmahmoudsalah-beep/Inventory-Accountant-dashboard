@@ -26,10 +26,13 @@ export const ALLOWED_DRIVE_EMAIL = "mohamed.mahmoudsalah@breadfast.com";
 const SCOPES =
   "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email";
 
+const SESSION_KEY = "breadfast-gdrive-token-v1";
+
 let gisLoaded = false;
 let pickerLoaded = false;
 let tokenClient: any = null;
 let accessToken: string | null = null;
+let tokenExpiresAt = 0;
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -46,9 +49,37 @@ export function isGoogleDriveConfigured() {
   return Boolean(GOOGLE_CLIENT_ID && GOOGLE_API_KEY);
 }
 
+// Restore a still-valid token from this browser tab's sessionStorage, so a
+// page reload doesn't force signing in again every time (it still won't
+// survive closing the tab, and it's revalidated against ALLOWED_DRIVE_EMAIL
+// again the next time a token is actually needed).
+try {
+  const cached = sessionStorage.getItem(SESSION_KEY);
+  if (cached) {
+    const parsed = JSON.parse(cached) as { token: string; expiresAt: number };
+    if (parsed.expiresAt > Date.now()) {
+      accessToken = parsed.token;
+      tokenExpiresAt = parsed.expiresAt;
+    }
+  }
+} catch {
+  // ignore corrupt/inaccessible sessionStorage
+}
+
+function cacheToken(token: string, expiresInSeconds: number) {
+  accessToken = token;
+  tokenExpiresAt = Date.now() + expiresInSeconds * 1000;
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, expiresAt: tokenExpiresAt }));
+  } catch {
+    // ignore
+  }
+}
+
 /** The current OAuth access token, if the user has already authenticated this session. */
 export function getCachedAccessToken(): string | null {
-  return accessToken;
+  if (accessToken && tokenExpiresAt > Date.now()) return accessToken;
+  return null;
 }
 
 async function ensureGisLoaded() {
@@ -77,15 +108,16 @@ async function verifySignedInEmail(token: string): Promise<string> {
 
 async function getAccessToken(forceAccountPicker = false): Promise<string> {
   await ensureGisLoaded();
-  if (accessToken && !forceAccountPicker) return accessToken;
+  const cached = getCachedAccessToken();
+  if (cached && !forceAccountPicker) return cached;
 
-  const token = await new Promise<string>((resolve, reject) => {
+  const resp = await new Promise<{ access_token: string; expires_in?: number }>((resolve, reject) => {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: SCOPES,
-      callback: (resp: any) => {
-        if (resp.error) return reject(new Error(resp.error));
-        resolve(resp.access_token);
+      callback: (r: any) => {
+        if (r.error) return reject(new Error(r.error));
+        resolve(r);
       },
     });
     tokenClient.requestAccessToken({
@@ -93,46 +125,37 @@ async function getAccessToken(forceAccountPicker = false): Promise<string> {
     });
   });
 
-  const email = await verifySignedInEmail(token);
+  const email = await verifySignedInEmail(resp.access_token);
   if (email.toLowerCase() !== ALLOWED_DRIVE_EMAIL.toLowerCase()) {
     // Revoke this token immediately - we don't want to hold access to the
     // wrong account at all, even in memory.
-    window.google.accounts.oauth2.revoke(token, () => {});
-    throw new Error(
-      `WRONG_ACCOUNT:${email || "unknown account"}`
-    );
+    window.google.accounts.oauth2.revoke(resp.access_token, () => {});
+    throw new Error(`WRONG_ACCOUNT:${email || "unknown account"}`);
   }
 
-  accessToken = token;
-  return token;
+  cacheToken(resp.access_token, resp.expires_in ?? 3600);
+  return resp.access_token;
 }
 
-/**
- * Opens Google's file picker scoped to the signed-in user's own Drive.
- * Resolves with the picked file's webViewLink (a normal Sheets URL), which
- * plugs straight into the existing fetchSheetAsRows() CSV export logic.
- */
-export async function pickGoogleSheet(): Promise<{ url: string; name: string } | null> {
-  if (!isGoogleDriveConfigured()) {
-    throw new Error("MISSING_CONFIG");
-  }
-
-  const token = await getAccessToken(true);
-  await ensurePickerLoaded();
-
+function buildPicker(token: string, multiSelect: boolean): Promise<{ url: string; name: string }[] | null> {
   return new Promise((resolve) => {
     const view = new window.google.picker.DocsView(window.google.picker.ViewId.SPREADSHEETS)
       .setMimeTypes("application/vnd.google-apps.spreadsheet")
       .setMode(window.google.picker.DocsViewMode.LIST);
 
-    const picker = new window.google.picker.PickerBuilder()
+    let builder = new window.google.picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(token)
-      .setDeveloperKey(GOOGLE_API_KEY)
+      .setDeveloperKey(GOOGLE_API_KEY);
+
+    if (multiSelect) {
+      builder = builder.enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED);
+    }
+
+    const picker = builder
       .setCallback((data: any) => {
         if (data.action === window.google.picker.Action.PICKED) {
-          const doc = data.docs[0];
-          resolve({ url: doc.url, name: doc.name });
+          resolve(data.docs.map((doc: any) => ({ url: doc.url, name: doc.name })));
         } else if (data.action === window.google.picker.Action.CANCEL) {
           resolve(null);
         }
@@ -141,4 +164,43 @@ export async function pickGoogleSheet(): Promise<{ url: string; name: string } |
 
     picker.setVisible(true);
   });
+}
+
+/** Opens Google's file picker scoped to the signed-in user's own Drive, single file. */
+export async function pickGoogleSheet(): Promise<{ url: string; name: string } | null> {
+  if (!isGoogleDriveConfigured()) throw new Error("MISSING_CONFIG");
+  const token = await getAccessToken(true);
+  await ensurePickerLoaded();
+  const picked = await buildPicker(token, false);
+  return picked ? picked[0] : null;
+}
+
+/** Same as pickGoogleSheet, but lets the user select several spreadsheets at once. */
+export async function pickGoogleSheets(): Promise<{ url: string; name: string }[] | null> {
+  if (!isGoogleDriveConfigured()) throw new Error("MISSING_CONFIG");
+  const token = await getAccessToken(true);
+  await ensurePickerLoaded();
+  return buildPicker(token, true);
+}
+
+export interface SheetTab {
+  title: string;
+  sheetId: number;
+}
+
+/** Lists the tab (worksheet) names inside a spreadsheet, so the user can pick one. */
+export async function listSheetTabs(spreadsheetId: string): Promise<SheetTab[]> {
+  const token = getCachedAccessToken();
+  if (!token) throw new Error("Not signed in to Google Drive yet.");
+
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(`Couldn't read this spreadsheet's tabs (status ${res.status}).`);
+  const data = await res.json();
+  return (data.sheets ?? []).map((s: any) => ({
+    title: s.properties.title as string,
+    sheetId: s.properties.sheetId as number,
+  }));
 }

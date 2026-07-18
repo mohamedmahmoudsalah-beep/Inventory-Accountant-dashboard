@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
-import { BrandMark } from "./BrandMark";
 
 export function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -14,11 +13,11 @@ export function LoginScreen() {
   return (
     <div className="min-h-svh flex items-center justify-center bg-[var(--bg)] px-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-8 justify-center">
-          <div className="w-9 h-9 rounded-lg bg-[var(--accent-dim)] border border-[var(--accent-border)] flex items-center justify-center">
-            <BrandMark size={19} />
+        <div className="flex items-center gap-2.5 mb-8 justify-center">
+          <div className="w-11 h-11 rounded-xl overflow-hidden">
+            <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
           </div>
-          <span className="text-lg font-semibold text-[var(--text-h)]">Breadfast Insights</span>
+          <span className="text-xl font-semibold text-[var(--text-h)]">Breadfast Insights</span>
         </div>
 
         <form
@@ -46,9 +45,6 @@ export function LoginScreen() {
           >
             Continue
           </button>
-          <p className="text-xs text-[var(--text-dim)] mt-4">
-            Demo accounts: admin@example.com (admin), manager@example.com (viewer)
-          </p>
         </form>
       </div>
     </div>

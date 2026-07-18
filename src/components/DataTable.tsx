@@ -6,9 +6,10 @@ import { exportRowsToExcel } from "../lib/exportExcel";
 interface Props {
   rows: DataRow[];
   columns: string[];
+  canExport?: boolean;
 }
 
-export function DataTable({ rows, columns }: Props) {
+export function DataTable({ rows, columns, canExport = true }: Props) {
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -36,6 +37,9 @@ export function DataTable({ rows, columns }: Props) {
     else { setSortCol(col); setSortDir(1); }
   }
 
+  const DISPLAY_LIMIT = 100;
+  const displayed = filtered.slice(0, DISPLAY_LIMIT);
+
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4">
       <div className="flex items-center justify-between gap-3 mb-3">
@@ -48,13 +52,21 @@ export function DataTable({ rows, columns }: Props) {
             className="bg-transparent text-sm outline-none flex-1 text-[var(--text)]"
           />
         </div>
-        <button
-          onClick={() => exportRowsToExcel(filtered, "table_data")}
-          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
-        >
-          <Download size={13} /> Export to Excel
-        </button>
+        {canExport && (
+          <button
+            onClick={() => exportRowsToExcel(filtered, "table_data")}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
+          >
+            <Download size={13} /> Export to Excel {filtered.length > DISPLAY_LIMIT ? `(all ${filtered.length} rows)` : ""}
+          </button>
+        )}
       </div>
+
+      {filtered.length > DISPLAY_LIMIT && (
+        <p className="text-xs text-[var(--text-dim)] mb-2">
+          Showing the first {DISPLAY_LIMIT} of {filtered.length} rows for speed — use Export to get all of them.
+        </p>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -74,7 +86,7 @@ export function DataTable({ rows, columns }: Props) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row, i) => (
+            {displayed.map((row, i) => (
               <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
                 {columns.map((c) => (
                   <td key={c} className="px-3 py-2 num text-[var(--text)] whitespace-nowrap">

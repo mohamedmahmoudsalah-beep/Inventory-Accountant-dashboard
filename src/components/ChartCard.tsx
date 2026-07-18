@@ -14,13 +14,14 @@ interface Props {
   rows: DataRow[];
   columns: string[];
   canEdit: boolean;
+  canExport?: boolean;
   onChange: (config: ChartConfig) => void;
   onRemove: () => void;
 }
 
 const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
 
-export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }: Props) {
+export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove }: Props) {
   // Aggregate rows by xKey, summing yKey — keeps charts readable when the
   // sheet has repeated categories (e.g. multiple rows per month).
   const aggregated = Object.values(
@@ -46,13 +47,15 @@ export function ChartCard({ config, rows, columns, canEdit, onChange, onRemove }
           <h3 className="text-sm">{config.title}</h3>
         )}
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => exportRowsToExcel(aggregated, config.title.replace(/\s+/g, "_"))}
-            title="Export to Excel"
-            className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
-          >
-            <Download size={14} />
-          </button>
+          {canExport && (
+            <button
+              onClick={() => exportRowsToExcel(aggregated, config.title.replace(/\s+/g, "_"))}
+              title="Export to Excel"
+              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
+            >
+              <Download size={14} />
+            </button>
+          )}
           {canEdit && (
             <button
               onClick={onRemove}

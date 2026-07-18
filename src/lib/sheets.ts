@@ -24,6 +24,25 @@ export interface ParsedSheet {
   columns: string[];
 }
 
+export interface FetchedTable {
+  fileName: string;
+  columns: string[];
+  rows: DataRow[];
+}
+
+/** Fetches several picked Google Sheets (already authenticated) and returns them
+ *  in the same shape importFiles.ts's appendTables()/mergeTables() expect. */
+export async function fetchMultipleSheets(
+  docs: { url: string; name: string }[]
+): Promise<FetchedTable[]> {
+  return Promise.all(
+    docs.map(async (doc) => {
+      const { rows, columns } = await fetchSheetAsRows(doc.url);
+      return { fileName: doc.name, columns, rows };
+    })
+  );
+}
+
 function rowsFromValues(values: string[][]): ParsedSheet {
   const [header, ...rest] = values;
   const columns = header ?? [];
@@ -48,13 +67,14 @@ function rowsFromValues(values: string[][]): ParsedSheet {
  * token is available (e.g. the user pasted a link instead of using
  * "Browse from Drive").
  */
-export async function fetchSheetAsRows(sheetUrl: string): Promise<ParsedSheet> {
+export async function fetchSheetAsRows(sheetUrl: string, tabTitle?: string): Promise<ParsedSheet> {
   const token = getCachedAccessToken();
   const id = extractSheetId(sheetUrl);
 
   if (token && id) {
+    const range = tabTitle ? `'${tabTitle}'!A1:ZZ20000` : "A1:ZZ20000";
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/A1:ZZ20000`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (res.ok) {

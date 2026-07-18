@@ -1,26 +1,30 @@
 import { useState } from "react";
-import { Plus, LogOut, Sparkles, ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { Plus, LogOut, Sparkles, ChevronDown, ChevronRight, FileText, Database, Users } from "lucide-react";
 import type { Department } from "../types";
 import { useAuth } from "../lib/auth";
-import { BrandMark } from "./BrandMark";
+import { canManageStructure, canManageUsers, canUseAssistant, ROLE_LABELS } from "../lib/permissions";
 
 interface Props {
   departments: Department[];
   activeDeptId: string;
   activePageId: string;
+  showingDataSources: boolean;
+  showingUsers: boolean;
   onSelectPage: (deptId: string, pageId: string) => void;
+  onSelectDataSources: () => void;
+  onSelectUsers: () => void;
   onAddDepartment: () => void;
   onAddPage: (deptId: string) => void;
   onOpenAssistant: () => void;
 }
 
 export function Sidebar({
-  departments, activeDeptId, activePageId,
-  onSelectPage, onAddDepartment, onAddPage, onOpenAssistant,
+  departments, activeDeptId, activePageId, showingDataSources, showingUsers,
+  onSelectPage, onSelectDataSources, onSelectUsers, onAddDepartment, onAddPage, onOpenAssistant,
 }: Props) {
   const { user, logout } = useAuth();
   const [expanded, setExpanded] = useState<Set<string>>(new Set([activeDeptId]));
-  const canEdit = user?.role === "admin";
+  const canEditStructure = canManageStructure(user?.role);
 
   function toggle(deptId: string) {
     setExpanded((prev) => {
@@ -33,10 +37,10 @@ export function Sidebar({
   return (
     <aside className="w-64 shrink-0 bg-[var(--panel)] border-r border-[var(--border)] flex flex-col h-svh">
       <div className="flex items-center gap-2 px-4 h-14 border-b border-[var(--border)]">
-        <div className="w-7 h-7 rounded-md bg-[var(--accent-dim)] border border-[var(--accent-border)] flex items-center justify-center shrink-0">
-          <BrandMark size={16} />
+        <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0">
+          <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
         </div>
-        <span className="text-sm font-semibold text-[var(--text-h)] truncate">Breadfast Insights</span>
+        <span className="text-base font-semibold text-[var(--text-h)] truncate">Breadfast Insights</span>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-2">
@@ -61,7 +65,7 @@ export function Sidebar({
                       key={page.id}
                       onClick={() => onSelectPage(dept.id, page.id)}
                       className={`w-full flex items-center gap-1.5 text-left px-2 py-1.5 rounded-md text-sm mb-0.5 transition ${
-                        dept.id === activeDeptId && page.id === activePageId
+                        dept.id === activeDeptId && page.id === activePageId && !showingDataSources && !showingUsers
                           ? "bg-[var(--accent-dim)] text-[var(--text-h)] border border-[var(--accent-border)]"
                           : "text-[var(--text-dim)] hover:bg-[var(--panel-raised)] border border-transparent"
                       }`}
@@ -70,7 +74,7 @@ export function Sidebar({
                       <span className="truncate">{page.name}</span>
                     </button>
                   ))}
-                  {canEdit && (
+                  {canEditStructure && (
                     <button
                       onClick={() => onAddPage(dept.id)}
                       className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
@@ -84,7 +88,7 @@ export function Sidebar({
           );
         })}
 
-        {canEdit && (
+        {canEditStructure && (
           <button
             onClick={onAddDepartment}
             className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mt-2 text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
@@ -96,15 +100,39 @@ export function Sidebar({
 
       <div className="p-2 border-t border-[var(--border)]">
         <button
-          onClick={onOpenAssistant}
-          className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+          onClick={onSelectDataSources}
+          className={`w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 ${
+            showingDataSources
+              ? "bg-[var(--accent-dim)] text-[var(--text-h)] border border-[var(--accent-border)]"
+              : "text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+          }`}
         >
-          <Sparkles size={15} color="var(--accent)" /> AI Assistant
+          <Database size={15} /> Data Sources
         </button>
+        {canManageUsers(user?.role) && (
+          <button
+            onClick={onSelectUsers}
+            className={`w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 ${
+              showingUsers
+                ? "bg-[var(--accent-dim)] text-[var(--text-h)] border border-[var(--accent-border)]"
+                : "text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+            }`}
+          >
+            <Users size={15} /> Manage Users
+          </button>
+        )}
+        {canUseAssistant(user?.role) && (
+          <button
+            onClick={onOpenAssistant}
+            className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+          >
+            <Sparkles size={15} color="var(--accent)" /> AI Assistant
+          </button>
+        )}
         <div className="flex items-center justify-between px-2.5 py-2">
           <div className="min-w-0">
             <p className="text-xs text-[var(--text)] truncate">{user?.email}</p>
-            <p className="text-[10px] text-[var(--text-dim)] uppercase">{user?.role}</p>
+            <p className="text-[10px] text-[var(--text-dim)] uppercase">{user ? ROLE_LABELS[user.role] : ""}</p>
           </div>
           <button onClick={logout} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
             <LogOut size={15} />
