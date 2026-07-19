@@ -46,9 +46,10 @@ export interface PivotConfig {
   title: string;
   groupCols: string[]; // any number of columns to group by (nested rows)
   values: PivotValueMetric[]; // one or more aggregated value columns
-  sortByValueId?: string; // which value metric drives Top/Bottom N; defaults to values[0]
+  sortByValueId?: string; // which value metric drives the ranking; defaults to values[0]
   sortDir: "desc" | "asc";
-  limit: number; // Top/Bottom N
+  rangeStart: number; // 1-based rank to start showing from
+  rangeEnd: number; // 1-based rank to stop showing at (inclusive)
 }
 
 export interface MatrixConfig {
@@ -104,6 +105,7 @@ export interface TaskPage {
   matrices: MatrixConfig[];
   cards: CardConfig[];
   texts: TextConfig[];
+  widgetOrder?: string[]; // display order of widget ids across all kinds; falls back to grouped-by-kind order if absent
   measures: Measure[];
   calculatedColumns: CalculatedColumn[];
   activeFilters: FilterConfig[];

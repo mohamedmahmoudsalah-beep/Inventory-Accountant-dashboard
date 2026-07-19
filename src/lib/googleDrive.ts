@@ -169,7 +169,7 @@ function buildPicker(token: string, multiSelect: boolean): Promise<{ url: string
 /** Opens Google's file picker scoped to the signed-in user's own Drive, single file. */
 export async function pickGoogleSheet(): Promise<{ url: string; name: string } | null> {
   if (!isGoogleDriveConfigured()) throw new Error("MISSING_CONFIG");
-  const token = await getAccessToken(true);
+  const token = await getAccessToken(false);
   await ensurePickerLoaded();
   const picked = await buildPicker(token, false);
   return picked ? picked[0] : null;
@@ -178,7 +178,7 @@ export async function pickGoogleSheet(): Promise<{ url: string; name: string } |
 /** Same as pickGoogleSheet, but lets the user select several spreadsheets at once. */
 export async function pickGoogleSheets(): Promise<{ url: string; name: string }[] | null> {
   if (!isGoogleDriveConfigured()) throw new Error("MISSING_CONFIG");
-  const token = await getAccessToken(true);
+  const token = await getAccessToken(false);
   await ensurePickerLoaded();
   return buildPicker(token, true);
 }

@@ -52,7 +52,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
       ? (b.metrics[sortMetricIdx] ?? 0) - (a.metrics[sortMetricIdx] ?? 0)
       : (a.metrics[sortMetricIdx] ?? 0) - (b.metrics[sortMetricIdx] ?? 0)
   );
-  result = result.slice(0, config.limit);
+  result = result.slice(Math.max(0, config.rangeStart - 1), config.rangeEnd);
 
   if (sortCol) {
     const colIdx = groupCols.indexOf(sortCol);
@@ -147,12 +147,19 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
             onChange={(e) => onChange({ ...config, sortDir: e.target.value as "desc" | "asc" })}
             className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           >
-            <option value="desc">Top</option>
-            <option value="asc">Bottom</option>
+            <option value="desc">Highest first</option>
+            <option value="asc">Lowest first</option>
           </select>
+          <span className="text-[var(--text-dim)]">rank</span>
           <input
-            type="number" min={1} value={config.limit}
-            onChange={(e) => onChange({ ...config, limit: Math.max(1, Number(e.target.value) || 1) })}
+            type="number" min={1} value={config.rangeStart}
+            onChange={(e) => onChange({ ...config, rangeStart: Math.max(1, Number(e.target.value) || 1) })}
+            className="w-14 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          />
+          <span className="text-[var(--text-dim)]">to</span>
+          <input
+            type="number" min={1} value={config.rangeEnd}
+            onChange={(e) => onChange({ ...config, rangeEnd: Math.max(config.rangeStart, Number(e.target.value) || config.rangeStart) })}
             className="w-14 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           />
           {values.length > 1 && (

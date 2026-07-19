@@ -141,7 +141,12 @@ function DashboardApp() {
   useEffect(() => {
     if (!stateReady) return;
     const timer = setTimeout(async () => {
-      const ok = await saveRemoteState({ departments, activeDeptId, activePageId, _writerId: TAB_SESSION_ID });
+      const ok = await saveRemoteState({
+        departments,
+        activeDeptId,
+        activePageId,
+        _writerId: TAB_SESSION_ID,
+      });
       if (!ok && !saveFailWarnedRef.current) {
         saveFailWarnedRef.current = true;
         alert(
@@ -156,6 +161,13 @@ function DashboardApp() {
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
+
+  useEffect(() => {
+    if (activePage.sheetUrl && activePage.rows.length === 0 && !refreshing) {
+      loadSheet(activePage.sheetUrl, activePage.sheetTabTitle);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage.id, activePage.sheetUrl, activePage.rows.length]);
 
   useEffect(() => {
     if (!activePage.autoRefresh || !activePage.sheetUrl) return;
@@ -242,19 +254,32 @@ function DashboardApp() {
     }
   }
 
+  function getWidgetOrder(page: TaskPage): string[] {
+    const allIds = [
+      ...page.charts.map((c) => c.id),
+      ...page.pivots.map((p) => p.id),
+      ...page.matrices.map((m) => m.id),
+      ...page.cards.map((c) => c.id),
+      ...page.texts.map((t) => t.id),
+    ];
+    if (page.widgetOrder && page.widgetOrder.length === allIds.length) return page.widgetOrder;
+    // Fall back to kind-grouped order (older pages, or an id got out of sync) and heal it.
+    return allIds;
+  }
+
   // --- Charts ---
   function updateChart(chart: ChartConfig) {
     updatePage({ charts: activePage.charts.map((c) => (c.id === chart.id ? chart : c)) });
   }
   function removeChart(id: string) {
-    updatePage({ charts: activePage.charts.filter((c) => c.id !== id) });
+    updatePage({ charts: activePage.charts.filter((c) => c.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
   }
   function addChart() {
     const newChart: ChartConfig = {
       id: crypto.randomUUID(), title: "New chart", type: "bar",
       xKey: effective.columns[0], yKey: effective.columns[1] ?? effective.columns[0],
     };
-    updatePage({ charts: [...activePage.charts, newChart] });
+    updatePage({ charts: [...activePage.charts, newChart], widgetOrder: [...getWidgetOrder(activePage), newChart.id] });
   }
 
   // --- Pivots ---
@@ -262,16 +287,16 @@ function DashboardApp() {
     updatePage({ pivots: activePage.pivots.map((p) => (p.id === pivot.id ? pivot : p)) });
   }
   function removePivot(id: string) {
-    updatePage({ pivots: activePage.pivots.filter((p) => p.id !== id) });
+    updatePage({ pivots: activePage.pivots.filter((p) => p.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
   }
   function addPivot() {
     const newPivot: PivotConfig = {
       id: crypto.randomUUID(), title: "New pivot table",
       groupCols: [effective.columns[0]],
       values: [{ id: crypto.randomUUID(), label: `sum ${effective.columns[1] ?? effective.columns[0]}`, source: { kind: "column", column: effective.columns[1] ?? effective.columns[0], agg: "sum" } }],
-      sortDir: "desc", limit: 10,
+      sortDir: "desc", rangeStart: 1, rangeEnd: 10,
     };
-    updatePage({ pivots: [...activePage.pivots, newPivot] });
+    updatePage({ pivots: [...activePage.pivots, newPivot], widgetOrder: [...getWidgetOrder(activePage), newPivot.id] });
   }
 
   // --- Matrices ---
@@ -279,7 +304,7 @@ function DashboardApp() {
     updatePage({ matrices: activePage.matrices.map((m) => (m.id === matrix.id ? matrix : m)) });
   }
   function removeMatrix(id: string) {
-    updatePage({ matrices: activePage.matrices.filter((m) => m.id !== id) });
+    updatePage({ matrices: activePage.matrices.filter((m) => m.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
   }
   function addMatrix() {
     const newMatrix: MatrixConfig = {
@@ -287,7 +312,7 @@ function DashboardApp() {
       rowCol: effective.columns[0], colCol: effective.columns[1] ?? effective.columns[0],
       value: { kind: "column", column: effective.columns[2] ?? effective.columns[0], agg: "sum" },
     };
-    updatePage({ matrices: [...activePage.matrices, newMatrix] });
+    updatePage({ matrices: [...activePage.matrices, newMatrix], widgetOrder: [...getWidgetOrder(activePage), newMatrix.id] });
   }
 
   // --- Cards ---
@@ -295,14 +320,14 @@ function DashboardApp() {
     updatePage({ cards: activePage.cards.map((c) => (c.id === card.id ? card : c)) });
   }
   function removeCard(id: string) {
-    updatePage({ cards: activePage.cards.filter((c) => c.id !== id) });
+    updatePage({ cards: activePage.cards.filter((c) => c.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
   }
   function addCard() {
     const newCard: CardConfig = {
       id: crypto.randomUUID(), title: "New card",
       value: { kind: "column", column: effective.columns[0], agg: "sum" },
     };
-    updatePage({ cards: [...activePage.cards, newCard] });
+    updatePage({ cards: [...activePage.cards, newCard], widgetOrder: [...getWidgetOrder(activePage), newCard.id] });
   }
 
   // --- Text/image widgets ---
@@ -310,11 +335,11 @@ function DashboardApp() {
     updatePage({ texts: activePage.texts.map((t) => (t.id === text.id ? text : t)) });
   }
   function removeText(id: string) {
-    updatePage({ texts: activePage.texts.filter((t) => t.id !== id) });
+    updatePage({ texts: activePage.texts.filter((t) => t.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
   }
   function addText() {
     const newText: TextConfig = { id: crypto.randomUUID(), title: "", body: "" };
-    updatePage({ texts: [...activePage.texts, newText] });
+    updatePage({ texts: [...activePage.texts, newText], widgetOrder: [...getWidgetOrder(activePage), newText.id] });
   }
 
   // --- Measures & calculated columns ---
@@ -325,7 +350,9 @@ function DashboardApp() {
     updatePage({ calculatedColumns });
   }
 
-  // Widgets (charts + pivots + matrices + cards + texts) share one reorder list.
+  // A single shared display order lets any widget kind sit next to any
+  // other — charts, pivots, matrices, cards, and text can be freely
+  // interleaved instead of always grouping by type.
   type WidgetRef =
     | { kind: "chart"; item: ChartConfig }
     | { kind: "pivot"; item: PivotConfig }
@@ -333,29 +360,26 @@ function DashboardApp() {
     | { kind: "card"; item: CardConfig }
     | { kind: "text"; item: TextConfig };
 
-  const widgetOrder: WidgetRef[] = [
-    ...activePage.charts.map((c): WidgetRef => ({ kind: "chart", item: c })),
-    ...activePage.pivots.map((p): WidgetRef => ({ kind: "pivot", item: p })),
-    ...activePage.matrices.map((m): WidgetRef => ({ kind: "matrix", item: m })),
-    ...activePage.cards.map((c): WidgetRef => ({ kind: "card", item: c })),
-    ...activePage.texts.map((t): WidgetRef => ({ kind: "text", item: t })),
-  ];
+  const widgetLookup = new Map<string, WidgetRef>();
+  activePage.charts.forEach((c) => widgetLookup.set(c.id, { kind: "chart", item: c }));
+  activePage.pivots.forEach((p) => widgetLookup.set(p.id, { kind: "pivot", item: p }));
+  activePage.matrices.forEach((m) => widgetLookup.set(m.id, { kind: "matrix", item: m }));
+  activePage.cards.forEach((c) => widgetLookup.set(c.id, { kind: "card", item: c }));
+  activePage.texts.forEach((t) => widgetLookup.set(t.id, { kind: "text", item: t }));
+
+  const orderedWidgets = getWidgetOrder(activePage)
+    .map((id) => widgetLookup.get(id))
+    .filter((w): w is WidgetRef => Boolean(w));
 
   function reorderWidgets(draggedId: string, targetId: string) {
-    const ids = widgetOrder.map((w) => w.item.id);
-    const from = ids.indexOf(draggedId);
-    const to = ids.indexOf(targetId);
+    const order = getWidgetOrder(activePage);
+    const from = order.indexOf(draggedId);
+    const to = order.indexOf(targetId);
     if (from === -1 || to === -1) return;
-    const reordered = [...widgetOrder];
-    const [moved] = reordered.splice(from, 1);
-    reordered.splice(to, 0, moved);
-    updatePage({
-      charts: reordered.filter((w): w is { kind: "chart"; item: ChartConfig } => w.kind === "chart").map((w) => w.item),
-      pivots: reordered.filter((w): w is { kind: "pivot"; item: PivotConfig } => w.kind === "pivot").map((w) => w.item),
-      matrices: reordered.filter((w): w is { kind: "matrix"; item: MatrixConfig } => w.kind === "matrix").map((w) => w.item),
-      cards: reordered.filter((w): w is { kind: "card"; item: CardConfig } => w.kind === "card").map((w) => w.item),
-      texts: reordered.filter((w): w is { kind: "text"; item: TextConfig } => w.kind === "text").map((w) => w.item),
-    });
+    const next = [...order];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    updatePage({ widgetOrder: next });
   }
 
   // --- Team/page structure: add, rename, delete ---
@@ -498,48 +522,58 @@ function DashboardApp() {
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-4 items-start">
-                  {activePage.charts.map((chart) => (
-                    <WidgetShell key={chart.id} id={chart.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                      <ChartCard
-                        config={chart} rows={filteredRows} columns={effective.columns}
-                        canEdit={canEdit} canExport={canExportData}
-                        onChange={updateChart} onRemove={() => removeChart(chart.id)}
-                        onCrossFilter={canFilter ? handleCrossFilter : undefined}
-                      />
-                    </WidgetShell>
-                  ))}
-                  {activePage.pivots.map((pivot) => (
-                    <WidgetShell key={pivot.id} id={pivot.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                      <PivotCard
-                        config={pivot} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
-                        canEdit={canEdit} canExport={canExportData}
-                        onChange={updatePivot} onRemove={() => removePivot(pivot.id)}
-                      />
-                    </WidgetShell>
-                  ))}
-                  {activePage.matrices.map((matrix) => (
-                    <WidgetShell key={matrix.id} id={matrix.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                      <MatrixCard
-                        config={matrix} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
-                        canEdit={canEdit} canExport={canExportData}
-                        onChange={updateMatrix} onRemove={() => removeMatrix(matrix.id)}
-                      />
-                    </WidgetShell>
-                  ))}
-                  {activePage.cards.map((card) => (
-                    <WidgetShell key={card.id} id={card.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                      <CardWidget
-                        config={card} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
-                        canEdit={canEdit}
-                        onChange={updateCard} onRemove={() => removeCard(card.id)}
-                      />
-                    </WidgetShell>
-                  ))}
-                  {activePage.texts.map((text) => (
-                    <WidgetShell key={text.id} id={text.id} canEdit={canEdit} onReorder={reorderWidgets}>
-                      <TextWidget config={text} canEdit={canEdit} onChange={updateText} onRemove={() => removeText(text.id)} />
-                    </WidgetShell>
-                  ))}
+                  {orderedWidgets.map((w) => {
+                    if (w.kind === "chart") {
+                      return (
+                        <WidgetShell key={w.item.id} id={w.item.id} kind="chart" canEdit={canEdit} onReorder={reorderWidgets}>
+                          <ChartCard
+                            config={w.item} rows={filteredRows} columns={effective.columns}
+                            canEdit={canEdit} canExport={canExportData}
+                            onChange={updateChart} onRemove={() => removeChart(w.item.id)}
+                            onCrossFilter={canFilter ? handleCrossFilter : undefined}
+                          />
+                        </WidgetShell>
+                      );
+                    }
+                    if (w.kind === "pivot") {
+                      return (
+                        <WidgetShell key={w.item.id} id={w.item.id} kind="pivot" canEdit={canEdit} onReorder={reorderWidgets}>
+                          <PivotCard
+                            config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                            canEdit={canEdit} canExport={canExportData}
+                            onChange={updatePivot} onRemove={() => removePivot(w.item.id)}
+                          />
+                        </WidgetShell>
+                      );
+                    }
+                    if (w.kind === "matrix") {
+                      return (
+                        <WidgetShell key={w.item.id} id={w.item.id} kind="matrix" canEdit={canEdit} onReorder={reorderWidgets}>
+                          <MatrixCard
+                            config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                            canEdit={canEdit} canExport={canExportData}
+                            onChange={updateMatrix} onRemove={() => removeMatrix(w.item.id)}
+                          />
+                        </WidgetShell>
+                      );
+                    }
+                    if (w.kind === "card") {
+                      return (
+                        <WidgetShell key={w.item.id} id={w.item.id} kind="card" canEdit={canEdit} onReorder={reorderWidgets}>
+                          <CardWidget
+                            config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
+                            canEdit={canEdit}
+                            onChange={updateCard} onRemove={() => removeCard(w.item.id)}
+                          />
+                        </WidgetShell>
+                      );
+                    }
+                    return (
+                      <WidgetShell key={w.item.id} id={w.item.id} kind="text" canEdit={canEdit} onReorder={reorderWidgets}>
+                        <TextWidget config={w.item} canEdit={canEdit} onChange={updateText} onRemove={() => removeText(w.item.id)} />
+                      </WidgetShell>
+                    );
+                  })}
                   {canEdit && (
                     <div className="flex flex-wrap gap-2">
                       <button onClick={addChart} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">

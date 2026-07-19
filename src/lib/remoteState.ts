@@ -1,5 +1,6 @@
 import { getSupabase, isSupabaseConfigured } from "./supabase";
 import { loadPersistedState, savePersistedState, type PersistedState } from "./persistence";
+import { stripHeavyRowsForSharedStorage } from "./stripHeavyData";
 
 const ROW_ID = "singleton";
 const TABLE = "app_state";
@@ -28,13 +29,21 @@ export async function loadRemoteState(): Promise<PersistedState | null> {
  *  Supabase write failed, so callers can warn the person instead of
  *  silently losing their change. */
 export async function saveRemoteState(state: PersistedState): Promise<boolean> {
-  savePersistedState(state); // local mirror, always
+  savePersistedState(state); // local mirror keeps full data, always
   const supabase = getSupabase();
   if (!supabase) return true; // local-only mode - nothing more to do
 
+  // Sheet-connected pages can always re-fetch their data live, so don't
+  // duplicate potentially thousands of rows into the shared blob on every
+  // edit — oversized payloads were the likely cause of intermittent 500s.
+  const lightweight: PersistedState = {
+    ...state,
+    departments: stripHeavyRowsForSharedStorage(state.departments),
+  };
+
   const { error } = await supabase
     .from(TABLE)
-    .upsert({ id: ROW_ID, data: state, updated_at: new Date().toISOString() });
+    .upsert({ id: ROW_ID, data: lightweight, updated_at: new Date().toISOString() });
 
   if (error) {
     console.error(
