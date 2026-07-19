@@ -19,6 +19,7 @@ import { UserManagement } from "./components/UserManagement";
 import { DataModelPanel } from "./components/DataModelPanel";
 import { fetchSheetAsRows } from "./lib/sheets";
 import { loadRemoteState, saveRemoteState, subscribeToRemoteState } from "./lib/remoteState";
+import { TAB_SESSION_ID } from "./lib/sessionId";
 import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
@@ -116,6 +117,13 @@ function DashboardApp() {
     })();
 
     const unsubscribe = subscribeToRemoteState((state) => {
+      // This tab's own writes echo back through realtime too. Applying that
+      // echo is harmless when nothing else has changed since, but if the
+      // person kept editing in the brief window before the echo arrived,
+      // applying it would revert those newer local edits. Since this event
+      // can only ever be this tab's own write or another tab's, and we
+      // stamp every write with which tab made it, skip our own.
+      if (state._writerId === TAB_SESSION_ID) return;
       receivedLiveUpdateRef.current = true;
       setDepartments(state.departments);
       setActiveDeptId(state.activeDeptId);
@@ -133,7 +141,7 @@ function DashboardApp() {
   useEffect(() => {
     if (!stateReady) return;
     const timer = setTimeout(async () => {
-      const ok = await saveRemoteState({ departments, activeDeptId, activePageId });
+      const ok = await saveRemoteState({ departments, activeDeptId, activePageId, _writerId: TAB_SESSION_ID });
       if (!ok && !saveFailWarnedRef.current) {
         saveFailWarnedRef.current = true;
         alert(

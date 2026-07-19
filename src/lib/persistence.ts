@@ -6,6 +6,7 @@ export interface PersistedState {
   departments: Department[];
   activeDeptId: string;
   activePageId: string;
+  _writerId?: string;
 }
 
 export function loadPersistedState(): PersistedState | null {
