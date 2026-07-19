@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginScreen } from "./components/LoginScreen";
@@ -96,13 +96,18 @@ function DashboardApp() {
     applyTheme(theme);
   }, [theme]);
 
+  const receivedLiveUpdateRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       const persisted = await loadRemoteState();
       if (cancelled) return;
-      if (persisted) {
+      // If a realtime update already arrived while this initial fetch was
+      // still in flight, that update is newer — don't let this stale fetch
+      // stomp on it (this was silently reverting people's edits before).
+      if (persisted && !receivedLiveUpdateRef.current) {
         setDepartments(persisted.departments);
         setActiveDeptId(persisted.activeDeptId);
         setActivePageId(persisted.activePageId);
@@ -111,6 +116,7 @@ function DashboardApp() {
     })();
 
     const unsubscribe = subscribeToRemoteState((state) => {
+      receivedLiveUpdateRef.current = true;
       setDepartments(state.departments);
       setActiveDeptId(state.activeDeptId);
       setActivePageId(state.activePageId);
@@ -132,6 +138,15 @@ function DashboardApp() {
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
+
+  useEffect(() => {
+    if (!activePage.autoRefresh || !activePage.sheetUrl) return;
+    const interval = setInterval(() => {
+      loadSheet(activePage.sheetUrl, activePage.sheetTabTitle);
+    }, 60_000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage.autoRefresh, activePage.sheetUrl, activePage.sheetTabTitle, activePage.id]);
 
   function updatePage(patch: Partial<TaskPage>) {
     setDepartments((ds) =>
@@ -196,6 +211,17 @@ function DashboardApp() {
 
   function setFilters(filters: FilterConfig[]) {
     updatePage({ activeFilters: filters });
+  }
+
+  function handleCrossFilter(column: string, value: string) {
+    const existing = activePage.activeFilters.find((f) => f.column === column && f.mode !== "range");
+    if (existing && existing.value === value) {
+      setFilters(activePage.activeFilters.filter((f) => f !== existing));
+    } else if (existing) {
+      setFilters(activePage.activeFilters.map((f) => (f === existing ? { ...f, value } : f)));
+    } else {
+      setFilters([...activePage.activeFilters, { column, mode: "equals", value }]);
+    }
   }
 
   // --- Charts ---
@@ -436,6 +462,7 @@ function DashboardApp() {
               onConnectSheet={handleConnectSheet}
               onImportData={handleImportData}
               onOpenDataModel={() => setShowDataModel(true)}
+              onToggleAutoRefresh={(enabled) => updatePage({ autoRefresh: enabled })}
             />
 
             <FilterBar
@@ -452,13 +479,14 @@ function DashboardApp() {
                   No data yet — connect a Google Sheet, import a file, or combine online sheets above to get started.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-wrap gap-4 items-start">
                   {activePage.charts.map((chart) => (
                     <WidgetShell key={chart.id} id={chart.id} canEdit={canEdit} onReorder={reorderWidgets}>
                       <ChartCard
                         config={chart} rows={filteredRows} columns={effective.columns}
                         canEdit={canEdit} canExport={canExportData}
                         onChange={updateChart} onRemove={() => removeChart(chart.id)}
+                        onCrossFilter={canFilter ? handleCrossFilter : undefined}
                       />
                     </WidgetShell>
                   ))}

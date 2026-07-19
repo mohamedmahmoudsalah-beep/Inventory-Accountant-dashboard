@@ -1,27 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #17121b;
-  --panel: #1e1721;
-  --panel-raised: #251b29;
-  --border: #382a3d;
-  --text: #d9d3dc;
-  --text-dim: #93889b;
-  --text-h: #f6f2f7;
+  --bg: #221c28;
+  --panel: #2a2231;
+  --panel-raised: #332a3b;
+  --border: #453a4d;
+  --text: #ddd6e0;
+  --text-dim: #a89db0;
+  --text-h: #f7f3f9;
 
   /* Breadfast-inspired magenta as primary accent */
-  --accent: #c81e94;
+  --accent: #d33ba1;
   --accent-2: #e94fb0;
-  --accent-dim: rgba(200, 30, 148, 0.16);
-  --accent-border: rgba(200, 30, 148, 0.45);
+  --accent-dim: rgba(211, 59, 161, 0.18);
+  --accent-border: rgba(211, 59, 161, 0.45);
 
   /* Mint as secondary/success accent, echoing the light logo variant */
-  --mint: #57c99a;
-  --mint-dim: rgba(87, 201, 154, 0.16);
+  --mint: #5fcda0;
+  --mint-dim: rgba(95, 205, 160, 0.16);
 
-  --good: #57c99a;
-  --bad: #e0664f;
-  --info: #7aa2e8;
+  --good: #5fcda0;
+  --bad: #e37b64;
+  --info: #85acec;
 
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -36,21 +36,21 @@
 }
 
 [data-theme="light"] {
-  --bg: #faf7fb;
-  --panel: #ffffff;
-  --panel-raised: #f4eef6;
-  --border: #e6dbe9;
-  --text: #392f3d;
-  --text-dim: #8c7f92;
-  --text-h: #1c1420;
+  --bg: #f3eef2;
+  --panel: #fbf8fa;
+  --panel-raised: #f0e8ee;
+  --border: #ddd0da;
+  --text: #4a3f4d;
+  --text-dim: #857a89;
+  --text-h: #241d27;
 
   --accent: #c81e94;
   --accent-2: #e94fb0;
-  --accent-dim: rgba(200, 30, 148, 0.08);
-  --accent-border: rgba(200, 30, 148, 0.35);
+  --accent-dim: rgba(200, 30, 148, 0.10);
+  --accent-border: rgba(200, 30, 148, 0.38);
 
   --mint: #2e9d72;
-  --mint-dim: rgba(46, 157, 114, 0.10);
+  --mint-dim: rgba(46, 157, 114, 0.12);
 
   --good: #2e9d72;
   --bad: #c94a35;

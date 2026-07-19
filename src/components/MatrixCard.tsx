@@ -47,7 +47,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
       : measures.find((m) => m.id === (config.value as { measureId: string }).measureId)?.name ?? "value";
 
   return (
-    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col">
+    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col h-full">
       <div className="flex items-start justify-between gap-2 mb-3">
         {canEdit ? (
           <input
@@ -112,7 +112,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
         </div>
       )}
 
-      <div className="overflow-auto max-h-80">
+      <div className="flex-1 overflow-auto min-h-0">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--border)]">

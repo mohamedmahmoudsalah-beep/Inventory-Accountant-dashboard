@@ -18,11 +18,12 @@ interface Props {
   canExport?: boolean;
   onChange: (config: ChartConfig) => void;
   onRemove: () => void;
+  onCrossFilter?: (column: string, value: string) => void;
 }
 
 const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
 
-export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove }: Props) {
+export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter }: Props) {
   // Aggregate rows by xKey, summing yKey — keeps charts readable when the
   // sheet has repeated categories (e.g. multiple rows per month).
   const aggregated = Object.values(
@@ -35,13 +36,12 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
     }, {})
   );
 
-  const treemapData = aggregated.map((row) => ({
-    name: String(row[config.xKey]),
-    size: Number(row[config.yKey]) || 0,
-  }));
+  const treemapData = aggregated
+    .map((row) => ({ name: String(row[config.xKey]), size: Number(row[config.yKey]) || 0 }))
+    .sort((a, b) => b.size - a.size);
 
   return (
-    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col">
+    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col h-full">
       <div className="flex items-start justify-between gap-2 mb-3">
         {canEdit ? (
           <input
@@ -116,7 +116,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
         </div>
       )}
 
-      <div className="h-56">
+      <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           {config.type === "bar" ? (
             <BarChart data={aggregated}>
@@ -124,7 +124,13 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
               <YAxis stroke="var(--text-dim)" fontSize={11} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey={config.yKey} fill="var(--accent)" radius={[4, 4, 0, 0]}>
+              <Bar
+                dataKey={config.yKey}
+                fill="var(--accent)"
+                radius={[4, 4, 0, 0]}
+                cursor={onCrossFilter ? "pointer" : undefined}
+                onClick={(data: any) => onCrossFilter?.(config.xKey, String(data?.[config.xKey]))}
+              >
                 {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
               </Bar>
             </BarChart>
@@ -172,6 +178,9 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             </RadarChart>
           ) : config.type === "treemap" ? (
             <Treemap data={treemapData} dataKey="size" stroke="var(--panel)" fill="var(--accent)">
+              {treemapData.map((_, i) => (
+                <Cell key={i} fill={COLORS[i % COLORS.length]} />
+              ))}
               <Tooltip contentStyle={tooltipStyle} />
             </Treemap>
           ) : (
@@ -184,6 +193,8 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
                 nameKey={config.xKey}
                 outerRadius={80}
                 label={(props: { name?: string }) => props.name ?? ""}
+                cursor={onCrossFilter ? "pointer" : undefined}
+                onClick={(data: { name?: string }) => data.name && onCrossFilter?.(config.xKey, data.name)}
               >
                 {aggregated.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />

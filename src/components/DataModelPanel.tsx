@@ -92,7 +92,15 @@ export function DataModelPanel({
         ) : (
           <div>
             <p className="text-xs text-[var(--text-dim)] mb-3">
-              Add a new column computed from existing ones. Reference column names directly (use [Column Name] if it has spaces), with +, -, *, /, comparisons, and IF(condition, ifTrue, ifFalse). Example: <code className="text-[var(--text)]">IF(region == "Cairo", revenue * 1.1, revenue)</code>
+              Works like an Excel formula. Reference column names directly (wrap in [Brackets] if the name has spaces), and use +, -, *, /, ==, &gt;, &lt;, and IF(condition, ifTrue, ifFalse). A few examples:
+            </p>
+            <ul className="text-xs text-[var(--text-dim)] mb-3 space-y-1 list-disc list-inside">
+              <li><code className="text-[var(--text)]">[Total Cost] - [Total Revenue]</code> — simple subtraction</li>
+              <li><code className="text-[var(--text)]">price * qty</code> — simple multiplication</li>
+              <li><code className="text-[var(--text)]">IF(region == "Cairo", revenue * 1.1, revenue)</code> — conditional, like Excel's IF()</li>
+            </ul>
+            <p className="text-xs text-[var(--text-dim)] mb-3">
+              Not sure how to write one? Just describe what you want in plain language in your chat with Claude (e.g. "add 10% to revenue only for Cairo orders") and ask it to give you the exact formula to paste here.
             </p>
             <div className="space-y-2">
               {calculatedColumns.map((c, i) => (

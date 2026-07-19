@@ -95,7 +95,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .channel("app_users_changes")
       .on("postgres_changes", { event: "*", schema: "public", table: USERS_TABLE }, async () => {
         const list = await fetchSupabaseUsers();
-        if (!cancelled) setUsers(list);
+        // A transient network hiccup or a temporarily-empty result must never
+        // wipe out everyone's access — only apply real, non-empty updates.
+        if (!cancelled && list.length > 0) setUsers(list);
       })
       .subscribe();
 

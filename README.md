@@ -4,6 +4,20 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Critical fixes (please re-run the SQL note below if you use shared storage):**
+- Fixed a race condition where a slow initial page load could silently overwrite newer changes that had just arrived live from another device — this was the main cause of "my edits disappeared."
+- Fixed a bug where a brief network hiccup while loading the shared user list could wipe it down to zero locally, locking out everyone — including admins — until a refresh happened to land at the right time.
+- Fixed realtime sync not actually delivering the changed data to other devices (Postgres needs `replica identity full` on the shared tables — see the updated SQL below).
+- Fixed chart/widget resize not working — widgets were sitting inside a CSS grid, which fights manual resizing; they're now in a layout that resizes properly.
+- Fixed Treemap rendering every cell in the same solid color — it's now sorted largest → smallest with a distinct color per cell.
+
+**New:**
+- **Cross-filtering**: click a bar or pie slice to filter the rest of the page by that category (click again to clear it) — closer to how Power BI's cross-filtering works.
+- **Auto refresh**: a checkbox next to "Refresh data" pulls the connected sheet automatically every 60 seconds.
+- **Tab name field** when pasting a sheet link directly (works once you've signed into "Browse from Drive" at least once in that session).
+- Softened both the dark and light theme's contrast — dark was too close to pure black, light too close to pure white.
+- Calculated-column help text now reads more like familiar Excel formulas, with worked examples — and you can always just describe what you want in plain language in chat and ask for the exact formula.
+
 **Bug fixes:**
 - Fixed a real bug where numbers with thousands separators (e.g. `259,022,315`) were silently read as 0 in charts/pivots — now parsed correctly.
 - Fixed a hard 20,000-row cap when reading a Google Sheet — the app now pulls the entire sheet/tab, no matter how large.
@@ -83,7 +97,19 @@ To make it real and shared across your whole team (free, ~10 minutes):
 
    alter publication supabase_realtime add table app_state;
    alter publication supabase_realtime add table app_users;
+
+   -- Without this, Postgres only sends the primary key (not the actual
+   -- changed data) in realtime UPDATE events, so other browsers/devices
+   -- never actually receive your changes even though the write succeeded.
+   alter table app_state replica identity full;
+   alter table app_users replica identity full;
    ```
+
+**Already set this up before and having sync issues (edits not appearing on other devices)?** You likely created the tables before the `replica identity full` lines existed. Just run this in the SQL Editor — no need to recreate anything:
+```sql
+alter table app_state replica identity full;
+alter table app_users replica identity full;
+```
 
 3. Go to **Settings → API** in the left sidebar. Copy the **Project URL** and the **anon public** key.
 4. Add them to your `.env` file (copy `.env.example` if you haven't already):

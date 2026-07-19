@@ -22,7 +22,7 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
         })();
 
   return (
-    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between">
+    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between h-full">
       <div className="flex items-start justify-between gap-2 mb-2">
         {canEdit ? (
           <input

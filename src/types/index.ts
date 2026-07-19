@@ -95,6 +95,7 @@ export interface TaskPage {
   sourceType?: "manual" | "csv-link" | "drive";
   sheetUrl: string;
   sheetTabTitle?: string;
+  autoRefresh?: boolean;
   lastUpdated: string | null;
   rows: DataRow[]; // raw rows as fetched/imported (calculated columns are derived, not stored here)
   columns: string[]; // raw column names

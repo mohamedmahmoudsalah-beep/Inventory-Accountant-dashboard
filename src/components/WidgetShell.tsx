@@ -19,7 +19,9 @@ interface Props {
 export function WidgetShell({ id, canEdit, onReorder, children }: Props) {
   const [dragOver, setDragOver] = useState(false);
 
-  if (!canEdit) return <div className="min-w-0">{children}</div>;
+  if (!canEdit) {
+    return <div className="w-full sm:w-[460px] min-w-0">{children}</div>;
+  }
 
   return (
     <div
@@ -36,7 +38,8 @@ export function WidgetShell({ id, canEdit, onReorder, children }: Props) {
         const draggedId = e.dataTransfer.getData("text/widget-id");
         if (draggedId && draggedId !== id) onReorder(draggedId, id);
       }}
-      className={`relative resize overflow-auto min-w-[280px] min-h-[220px] rounded-xl transition ${
+      style={{ width: 460, height: 360 }}
+      className={`relative resize overflow-auto min-w-[300px] min-h-[240px] max-w-full rounded-xl transition ${
         dragOver ? "ring-2 ring-[var(--accent)]" : ""
       }`}
     >

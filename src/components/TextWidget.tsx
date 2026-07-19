@@ -10,7 +10,7 @@ interface Props {
 
 export function TextWidget({ config, canEdit, onChange, onRemove }: Props) {
   return (
-    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col">
+    <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col h-full">
       <div className="flex items-start justify-between gap-2 mb-2">
         {canEdit ? (
           <input
