@@ -1,103 +1,116 @@
-import { UserRole, WidgetType, DataSourceType } from "@prisma/client";
+export type Role = "admin" | "manager" | "employee" | "viewer";
 
-export interface User {
-  id: string;
-  name: string | null;
+export interface AllowedUser {
   email: string;
-  image: string | null;
-  role: UserRole;
+  role: Role;
 }
 
-export interface BusinessUnit {
-  id: string;
-  name: string;
-  nameAr: string | null;
-  description: string | null;
-  color: string;
-  isActive: boolean;
-  memberCount?: number;
-}
-
-export interface Dataset {
-  id: string;
-  name: string;
-  description: string | null;
-  type: DataSourceType;
-  sourceConfig: any;
-  refreshInterval: number | null;
-  lastRefreshed: Date | null;
-  rowCount: number | null;
-  isActive: boolean;
-  businessUnitId: string;
-  createdById: string;
-}
-
-export interface Dashboard {
-  id: string;
-  name: string;
-  description: string | null;
-  layout: any;
-  isPublished: boolean;
-  isPublic: boolean;
-  businessUnitId: string;
-  createdById: string;
-  widgetCount?: number;
-}
-
-export interface Widget {
-  id: string;
-  type: WidgetType;
-  title: string;
-  config: any;
-  position: { x: number; y: number; w: number; h: number };
-  dashboardId: string;
-  datasetId: string | null;
-}
+export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar" | "treemap";
 
 export interface ChartConfig {
-  type: WidgetType;
-  datasetId: string;
-  xAxis?: string;
-  yAxis?: string | string[];
-  aggregation?: "sum" | "avg" | "count" | "min" | "max";
-  filters?: FilterConfig[];
-  colors?: string[];
+  id: string;
+  title: string;
+  type: ChartType;
+  xKey: string;
+  yKey: string;
+  showValues?: boolean;
 }
 
 export interface FilterConfig {
   column: string;
-  operator: "equals" | "contains" | "greater" | "less" | "between";
-  value: any;
+  mode?: "equals" | "range"; // defaults to "equals" when absent
+  value: string; // "All" means no filter (equals mode)
+  from?: string; // range mode
+  to?: string; // range mode
 }
 
-export interface KPIData {
-  title: string;
-  value: number;
-  previousValue?: number;
-  format?: "number" | "currency" | "percentage";
-  trend?: "up" | "down" | "neutral";
+export interface DataRow {
+  [column: string]: string | number;
 }
 
-export interface TableColumn {
-  key: string;
+export type PivotAgg = "sum" | "avg" | "count" | "max" | "min";
+
+/** A value can come straight from a column+aggregation, or reuse a saved Measure. */
+export type ValueSource =
+  | { kind: "column"; column: string; agg: PivotAgg }
+  | { kind: "measure"; measureId: string };
+
+export interface PivotValueMetric {
+  id: string;
   label: string;
-  type?: "text" | "number" | "date" | "currency";
-  sortable?: boolean;
-  width?: number;
+  source: ValueSource;
 }
 
-export interface GoogleSheetConfig {
-  spreadsheetId: string;
-  range: string;
-  sheetName?: string;
+export interface PivotConfig {
+  id: string;
+  title: string;
+  groupCols: string[]; // any number of columns to group by (nested rows)
+  values: PivotValueMetric[]; // one or more aggregated value columns
+  sortByValueId?: string; // which value metric drives Top/Bottom N; defaults to values[0]
+  sortDir: "desc" | "asc";
+  limit: number; // Top/Bottom N
 }
 
-export interface GoogleDriveConfig {
-  folderId: string;
-  filePattern?: string;
+export interface MatrixConfig {
+  id: string;
+  title: string;
+  rowCol: string;
+  colCol: string;
+  value: ValueSource;
 }
 
-export interface DataTransform {
-  type: "append" | "merge" | "pivot" | "unpivot" | "groupBy" | "filter" | "sort" | "rename" | "replace" | "removeDuplicates" | "split" | "custom";
-  config: any;
+export interface CardConfig {
+  id: string;
+  title: string;
+  value: ValueSource;
+}
+
+export interface TextConfig {
+  id: string;
+  title: string;
+  body: string;
+  imageUrl?: string;
+}
+
+/** A reusable named aggregation (optionally conditional, like a simple SUMIF), 
+ *  selectable wherever a value column can be picked. */
+export interface Measure {
+  id: string;
+  name: string;
+  column: string;
+  agg: PivotAgg;
+  conditionColumn?: string;
+  conditionValue?: string;
+}
+
+export interface CalculatedColumn {
+  id: string;
+  name: string;
+  formula: string;
+}
+
+export interface TaskPage {
+  id: string;
+  name: string;
+  sourceType?: "manual" | "csv-link" | "drive";
+  sheetUrl: string;
+  sheetTabTitle?: string;
+  autoRefresh?: boolean;
+  lastUpdated: string | null;
+  rows: DataRow[]; // raw rows as fetched/imported (calculated columns are derived, not stored here)
+  columns: string[]; // raw column names
+  charts: ChartConfig[];
+  pivots: PivotConfig[];
+  matrices: MatrixConfig[];
+  cards: CardConfig[];
+  texts: TextConfig[];
+  measures: Measure[];
+  calculatedColumns: CalculatedColumn[];
+  activeFilters: FilterConfig[];
+}
+
+export interface Department {
+  id: string;
+  name: string;
+  pages: TaskPage[];
 }
