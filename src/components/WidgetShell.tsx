@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 
 interface Props {
@@ -9,12 +9,12 @@ interface Props {
   children: ReactNode;
 }
 
-const DEFAULT_SIZE: Record<Props["kind"], { width: number; height: number; minW: number; minH: number }> = {
-  chart: { width: 460, height: 360, minW: 300, minH: 240 },
-  pivot: { width: 460, height: 360, minW: 300, minH: 240 },
-  matrix: { width: 460, height: 360, minW: 300, minH: 240 },
-  card: { width: 220, height: 160, minW: 160, minH: 120 },
-  text: { width: 320, height: 220, minW: 220, minH: 140 },
+const DEFAULT_SIZE: Record<Props["kind"], { width: number; height: number }> = {
+  chart: { width: 460, height: 360 },
+  pivot: { width: 460, height: 360 },
+  matrix: { width: 460, height: 360 },
+  card: { width: 220, height: 160 },
+  text: { width: 320, height: 220 },
 };
 
 /**
@@ -25,17 +25,35 @@ const DEFAULT_SIZE: Record<Props["kind"], { width: number; height: number; minW:
  * free-position drag-and-drop canvas — good enough to rearrange and resize
  * a dashboard, but widgets still flow left-to-right/wrap rather than
  * floating at an arbitrary x/y position.
+ *
+ * The size is set imperatively once on mount (not via a style prop bound to
+ * every render) — this component re-renders very often (any small edit
+ * elsewhere on the page causes it), and a render-bound style prop would
+ * silently overwrite the browser's own resize state on every one of those,
+ * making manual resizing look like it "doesn't stick."
  */
 export function WidgetShell({ id, kind, canEdit, onReorder, children }: Props) {
   const [dragOver, setDragOver] = useState(false);
-  const size = DEFAULT_SIZE[kind];
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const size = DEFAULT_SIZE[kind];
+    el.style.width = `${size.width}px`;
+    el.style.height = `${size.height}px`;
+    // Deliberately runs once per mount only — see the note above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!canEdit) {
+    const size = DEFAULT_SIZE[kind];
     return <div style={{ width: size.width }} className="max-w-full min-w-0">{children}</div>;
   }
 
   return (
     <div
+      ref={ref}
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/widget-id", id)}
       onDragOver={(e) => {
@@ -49,7 +67,6 @@ export function WidgetShell({ id, kind, canEdit, onReorder, children }: Props) {
         const draggedId = e.dataTransfer.getData("text/widget-id");
         if (draggedId && draggedId !== id) onReorder(draggedId, id);
       }}
-      style={{ width: size.width, height: size.height }}
       className={`relative resize overflow-auto max-w-full rounded-xl transition ${
         dragOver ? "ring-2 ring-[var(--accent)]" : ""
       }`}

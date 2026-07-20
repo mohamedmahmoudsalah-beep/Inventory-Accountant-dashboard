@@ -28,22 +28,28 @@ export async function loadRemoteState(): Promise<PersistedState | null> {
  *  as an offline fallback. Returns false (and logs to the console) if the
  *  Supabase write failed, so callers can warn the person instead of
  *  silently losing their change. */
-export async function saveRemoteState(state: PersistedState): Promise<boolean> {
+export async function saveRemoteState(
+  state: PersistedState,
+  options?: { includeRows?: boolean }
+): Promise<boolean> {
   savePersistedState(state); // local mirror keeps full data, always
   const supabase = getSupabase();
   if (!supabase) return true; // local-only mode - nothing more to do
 
-  // Sheet-connected pages can always re-fetch their data live, so don't
-  // duplicate potentially thousands of rows into the shared blob on every
-  // edit — oversized payloads were the likely cause of intermittent 500s.
-  const lightweight: PersistedState = {
-    ...state,
-    departments: stripHeavyRowsForSharedStorage(state.departments),
-  };
+  // Small config edits (renaming a chart, changing a filter, etc.) save
+  // often and should stay lightweight — sheet rows are excluded from those
+  // and instead re-uploaded only right after an actual data refresh (see
+  // loadSheet's onSuccess), which happens far less often. Private
+  // Drive-connected sheets can only be re-fetched by the one signed-in
+  // account, so their rows DO need to be shared here for everyone else to
+  // see the data at all.
+  const payload: PersistedState = options?.includeRows
+    ? state
+    : { ...state, departments: stripHeavyRowsForSharedStorage(state.departments) };
 
   const { error } = await supabase
     .from(TABLE)
-    .upsert({ id: ROW_ID, data: lightweight, updated_at: new Date().toISOString() });
+    .upsert({ id: ROW_ID, data: payload, updated_at: new Date().toISOString() });
 
   if (error) {
     console.error(

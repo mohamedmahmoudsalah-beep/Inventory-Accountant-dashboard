@@ -162,9 +162,17 @@ function DashboardApp() {
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
 
+  const autoLoadAttemptedRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    if (activePage.sheetUrl && activePage.rows.length === 0 && !refreshing) {
-      loadSheet(activePage.sheetUrl, activePage.sheetTabTitle);
+    if (
+      activePage.sheetUrl &&
+      activePage.rows.length === 0 &&
+      !refreshing &&
+      !autoLoadAttemptedRef.current.has(activePage.id)
+    ) {
+      autoLoadAttemptedRef.current.add(activePage.id);
+      loadSheet(activePage.sheetUrl, activePage.sheetTabTitle, /* silent */ true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage.id, activePage.sheetUrl, activePage.rows.length]);
@@ -193,13 +201,39 @@ function DashboardApp() {
     await loadSheet(url, tabTitle);
   }
 
-  async function loadSheet(url: string, tabTitle?: string) {
+  async function loadSheet(url: string, tabTitle?: string, silent = false) {
     if (!url) return;
     setRefreshing(true);
     try {
       const { rows, columns } = await fetchSheetAsRows(url, tabTitle ?? activePage.sheetTabTitle);
-      updatePage({ rows: stampRowIds(rows), columns, lastUpdated: new Date().toISOString() });
+      const stampedRows = stampRowIds(rows);
+      const lastUpdated = new Date().toISOString();
+
+      const updatedDepartments = departments.map((d) =>
+        d.id !== activeDept.id
+          ? d
+          : {
+              ...d,
+              pages: d.pages.map((p) =>
+                p.id !== activePage.id ? p : { ...p, rows: stampedRows, columns, lastUpdated }
+              ),
+            }
+      );
+      setDepartments(updatedDepartments);
+
+      // Persist the freshly-fetched rows right away (not just the usual
+      // lightweight config-only autosave) — this is what lets viewers who
+      // can't re-fetch a private Drive sheet themselves still see real
+      // data, without re-uploading full row data on every small edit.
+      saveRemoteState(
+        { departments: updatedDepartments, activeDeptId, activePageId, _writerId: TAB_SESSION_ID },
+        { includeRows: true }
+      );
     } catch (e) {
+      if (silent) {
+        console.warn("Silent auto-load of a connected sheet failed (not shown to the person):", e);
+        return;
+      }
       alert(
         e instanceof Error && e.message !== "Failed to fetch"
           ? e.message
