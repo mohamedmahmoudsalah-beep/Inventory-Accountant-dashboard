@@ -4,6 +4,18 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Fixed excessive Supabase usage (Disk IO exhaustion warning):**
+The app used to push a full save to the shared database on almost every small edit (typing a chart title, moving a filter, resizing a widget's parent, etc.), which could exhaust a free-tier Supabase project's daily Disk IO budget and cause intermittent failures that looked like CORS errors. This is now much lighter:
+- Small edits are saved **locally only** (instant, free) so your own browser never loses your work.
+- The shared database is only written to: **once an hour** (a background sync, admin-only), or immediately after a **deliberate** action — connecting/refreshing a sheet, importing a file, or adding/renaming/deleting a team or page.
+- **Only the Admin account now connects new data sources, imports files, and exports to Excel.** Managers can still refresh an already-connected source and edit charts/pivots; Employees and Viewers are read-only for data connections either way. This was a deliberate simplification to reduce how many sessions could trigger shared-database writes at once.
+- Sheet data fetched by the admin is shared with everyone automatically (no one else needs their own Drive access) — but only refreshes on the hourly sync or when the admin manually clicks refresh, not continuously.
+- Fixed imported/combined offline Excel data disappearing after a refresh — it's now saved immediately since (unlike a live sheet link) there's nowhere to re-fetch it from later.
+- Fixed repeated "couldn't load sheet" popups hammering the page for non-admin accounts — automatic background attempts now fail silently and only try once, instead of retrying and alerting endlessly.
+- Fixed manually resizing a chart/pivot silently reverting to the default size after any unrelated edit elsewhere on the page.
+
+**If you're seeing a Supabase "Disk IO Budget" email:** that's a resource-usage warning from Supabase itself (free tier), not something wrong with your data. It should settle down significantly with the changes above; if it persists, Supabase's dashboard shows daily/hourly IO usage under Settings → Infrastructure.
+
 **Critical fixes (please re-run the SQL note below if you use shared storage):**
 - Fixed a race condition where a slow initial page load could silently overwrite newer changes that had just arrived live from another device — this was the main cause of "my edits disappeared."
 - Fixed a bug where a brief network hiccup while loading the shared user list could wipe it down to zero locally, locking out everyone — including admins — until a refresh happened to land at the right time.

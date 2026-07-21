@@ -2,7 +2,7 @@ import { useState } from "react";
 import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma } from "lucide-react";
 import type { DataRow, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
-import { canManageDataSources } from "../lib/permissions";
+import { canManageDataSources, canConnectNewData } from "../lib/permissions";
 import {
   pickGoogleSheet,
   pickGoogleSheets,
@@ -22,10 +22,9 @@ interface Props {
   onConnectSheet: (url: string, tabTitle?: string, sourceType?: "csv-link" | "drive") => void;
   onImportData: (rows: DataRow[], columns: string[]) => void;
   onOpenDataModel: () => void;
-  onToggleAutoRefresh: (enabled: boolean) => void;
 }
 
-export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel, onToggleAutoRefresh }: Props) {
+export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel }: Props) {
   const { user } = useAuth();
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -108,6 +107,9 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
     }
   }
 
+  const canConnect = canConnectNewData(user?.role);
+  const canRefresh = canManageDataSources(user?.role);
+
   return (
     <div className="border-b border-[var(--border)] px-6 py-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -121,7 +123,7 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {canManageDataSources(user?.role) && (
+          {canConnect && (
             <>
               <button
                 onClick={handleBrowseDrive}
@@ -159,28 +161,20 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
               </button>
             </>
           )}
-          <button
-            onClick={onRefresh}
-            disabled={refreshing || !page.sheetUrl}
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-[var(--accent-dim)] border border-[var(--accent-border)] text-[var(--text-h)] hover:opacity-90 disabled:opacity-40"
-          >
-            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            Refresh data
-          </button>
-          {page.sheetUrl && (
-            <label className="flex items-center gap-1.5 text-xs text-[var(--text-dim)] cursor-pointer px-1">
-              <input
-                type="checkbox"
-                checked={page.autoRefresh ?? false}
-                onChange={(e) => onToggleAutoRefresh(e.target.checked)}
-              />
-              Auto (60s)
-            </label>
+          {canRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={refreshing || !page.sheetUrl}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-[var(--accent-dim)] border border-[var(--accent-border)] text-[var(--text-h)] hover:opacity-90 disabled:opacity-40"
+            >
+              {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Refresh data
+            </button>
           )}
         </div>
       </div>
 
-      {showConnect && (
+      {showConnect && canConnect && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -210,7 +204,7 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
         </form>
       )}
 
-      {showImport && (
+      {showImport && canConnect && (
         <ImportPanel
           onApply={(rows, columns) => onImportData(rows, columns)}
           onClose={() => setShowImport(false)}

@@ -19,6 +19,7 @@ import { UserManagement } from "./components/UserManagement";
 import { DataModelPanel } from "./components/DataModelPanel";
 import { fetchSheetAsRows } from "./lib/sheets";
 import { loadRemoteState, saveRemoteState, subscribeToRemoteState } from "./lib/remoteState";
+import { savePersistedState } from "./lib/persistence";
 import { TAB_SESSION_ID } from "./lib/sessionId";
 import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
@@ -137,27 +138,35 @@ function DashboardApp() {
   }, []);
 
   const saveFailWarnedRef = useRef(false);
+  const isAdmin = user?.role === "admin";
 
+  // Local-only mirror on every change — free (no Supabase cost), keeps the
+  // admin's own browser reliable across their own reloads. The expensive
+  // part (writing to the shared database) is deliberately NOT tied to every
+  // small edit anymore — see the hourly sync below and saveNow().
   useEffect(() => {
-    if (!stateReady) return;
-    const timer = setTimeout(async () => {
-      const ok = await saveRemoteState({
-        departments,
-        activeDeptId,
-        activePageId,
-        _writerId: TAB_SESSION_ID,
-      });
-      if (!ok && !saveFailWarnedRef.current) {
-        saveFailWarnedRef.current = true;
-        alert(
-          "Your changes are only saved in this browser right now — they didn't save to the shared database. " +
-            "Open the browser console (F12 → Console) for the exact error, or check that the Supabase SQL setup " +
-            "was run on this exact project and that VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY are correct."
-        );
-      }
-    }, 600);
+    const timer = setTimeout(() => {
+      savePersistedState({ departments, activeDeptId, activePageId });
+    }, 500);
     return () => clearTimeout(timer);
-  }, [departments, activeDeptId, activePageId, stateReady]);
+  }, [departments, activeDeptId, activePageId]);
+
+  async function saveNow(deps: Department[] = departments, includeRows = false) {
+    if (!isAdmin) return; // only the admin account writes to shared storage
+    const ok = await saveRemoteState(
+      { departments: deps, activeDeptId, activePageId, _writerId: TAB_SESSION_ID },
+      { includeRows }
+    );
+    if (!ok && !saveFailWarnedRef.current) {
+      saveFailWarnedRef.current = true;
+      alert(
+        "Your changes are only saved in this browser right now — they didn't save to the shared database. " +
+          "Open the browser console (F12 → Console) for the exact error, or check that the Supabase SQL setup " +
+          "was run on this exact project and that VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY are correct."
+      );
+    }
+    return ok;
+  }
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
@@ -165,7 +174,12 @@ function DashboardApp() {
   const autoLoadAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    // Only the admin account has Drive access (and is the only one who
+    // should be writing shared state) — other roles just wait for the
+    // admin's fetch to sync down via realtime instead of retrying a fetch
+    // that can never succeed for them.
     if (
+      isAdmin &&
       activePage.sheetUrl &&
       activePage.rows.length === 0 &&
       !refreshing &&
@@ -175,16 +189,57 @@ function DashboardApp() {
       loadSheet(activePage.sheetUrl, activePage.sheetTabTitle, /* silent */ true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage.id, activePage.sheetUrl, activePage.rows.length]);
+  }, [activePage.id, activePage.sheetUrl, activePage.rows.length, isAdmin]);
 
+  // Global, clock-aligned sync instead of continuous per-edit updates: once
+  // an hour (on the hour), re-fetch every sheet-connected page across every
+  // team and push the result once. The rest of the time, everyone just
+  // views whatever was last synced — no repeated fetching or writing.
   useEffect(() => {
-    if (!activePage.autoRefresh || !activePage.sheetUrl) return;
-    const interval = setInterval(() => {
-      loadSheet(activePage.sheetUrl, activePage.sheetTabTitle);
-    }, 60_000);
-    return () => clearInterval(interval);
+    if (!isAdmin) return;
+
+    async function syncAllSheetsNow() {
+      let current = departments;
+      for (const dept of current) {
+        for (const page of dept.pages) {
+          if (!page.sheetUrl) continue;
+          try {
+            const { rows, columns } = await fetchSheetAsRows(page.sheetUrl, page.sheetTabTitle);
+            const stampedRows = stampRowIds(rows);
+            const lastUpdated = new Date().toISOString();
+            current = current.map((d) =>
+              d.id !== dept.id
+                ? d
+                : { ...d, pages: d.pages.map((p) => (p.id !== page.id ? p : { ...p, rows: stampedRows, columns, lastUpdated })) }
+            );
+          } catch (e) {
+            console.warn(`Hourly sync: couldn't refresh "${page.name}" (not shown to the person):`, e);
+          }
+        }
+      }
+      setDepartments(current);
+      saveNow(current, true);
+    }
+
+    function msUntilNextHour() {
+      const now = new Date();
+      const next = new Date(now);
+      next.setMinutes(0, 0, 0);
+      next.setHours(now.getHours() + 1);
+      return next.getTime() - now.getTime();
+    }
+
+    const timeoutId = setTimeout(function runAndReschedule() {
+      syncAllSheetsNow();
+    }, msUntilNextHour());
+    const intervalId = setInterval(syncAllSheetsNow, 60 * 60 * 1000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage.autoRefresh, activePage.sheetUrl, activePage.sheetTabTitle, activePage.id]);
+  }, [isAdmin]);
 
   function updatePage(patch: Partial<TaskPage>) {
     setDepartments((ds) =>
@@ -221,14 +276,11 @@ function DashboardApp() {
       );
       setDepartments(updatedDepartments);
 
-      // Persist the freshly-fetched rows right away (not just the usual
-      // lightweight config-only autosave) — this is what lets viewers who
-      // can't re-fetch a private Drive sheet themselves still see real
-      // data, without re-uploading full row data on every small edit.
-      saveRemoteState(
-        { departments: updatedDepartments, activeDeptId, activePageId, _writerId: TAB_SESSION_ID },
-        { includeRows: true }
-      );
+      // An explicit refresh is a deliberate, infrequent action — worth
+      // saving immediately (with the real row data) rather than waiting
+      // for the next hourly sync, so a manual refresh actually reflects for
+      // everyone else right away.
+      saveNow(updatedDepartments, true);
     } catch (e) {
       if (silent) {
         console.warn("Silent auto-load of a connected sheet failed (not shown to the person):", e);
@@ -245,14 +297,33 @@ function DashboardApp() {
   }
 
   function handleImportData(rows: DataRow[], columns: string[]) {
-    updatePage({
-      rows: stampRowIds(rows),
-      columns,
-      sourceType: "manual",
-      sheetUrl: "",
-      sheetTabTitle: undefined,
-      lastUpdated: new Date().toISOString(),
-    });
+    const stampedRows = stampRowIds(rows);
+    const lastUpdated = new Date().toISOString();
+    const updatedDepartments = departments.map((d) =>
+      d.id !== activeDept.id
+        ? d
+        : {
+            ...d,
+            pages: d.pages.map((p) =>
+              p.id !== activePage.id
+                ? p
+                : {
+                    ...p,
+                    rows: stampedRows,
+                    columns,
+                    sourceType: "manual" as const,
+                    sheetUrl: "",
+                    sheetTabTitle: undefined,
+                    lastUpdated,
+                  }
+            ),
+          }
+    );
+    setDepartments(updatedDepartments);
+    // No live source to re-fetch this from later, so it has to be saved
+    // right away rather than waiting for the hourly sync — otherwise it
+    // would only exist in this browser until the next sync happened to run.
+    saveNow(updatedDepartments, true);
   }
 
   function handleEditCell(rid: string, column: string, value: string) {
@@ -420,26 +491,32 @@ function DashboardApp() {
   function addDepartment(name: string) {
     const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
     const dept = makeDefaultDepartment(id, name);
-    setDepartments((ds) => [...ds, dept]);
+    const next = [...departments, dept];
+    setDepartments(next);
     setActiveDeptId(id);
     setActivePageId(dept.pages[0].id);
     setAddDeptOpen(false);
     setView("dashboard");
+    saveNow(next);
   }
 
   function addPage(deptId: string, name: string) {
     const pageId = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
     const page = makeDefaultPage(pageId, name);
-    setDepartments((ds) => ds.map((d) => (d.id === deptId ? { ...d, pages: [...d.pages, page] } : d)));
+    const next = departments.map((d) => (d.id === deptId ? { ...d, pages: [...d.pages, page] } : d));
+    setDepartments(next);
     setActiveDeptId(deptId);
     setActivePageId(pageId);
     setAddPageForDept(null);
     setView("dashboard");
+    saveNow(next);
   }
 
   function renameDepartmentTo(deptId: string, name: string) {
-    setDepartments((ds) => ds.map((d) => (d.id === deptId ? { ...d, name } : d)));
+    const next = departments.map((d) => (d.id === deptId ? { ...d, name } : d));
+    setDepartments(next);
     setRenameDept(null);
+    saveNow(next);
   }
 
   function deleteDepartment(deptId: string) {
@@ -448,21 +525,22 @@ function DashboardApp() {
       return;
     }
     if (!confirm("Delete this team and all its pages? This can't be undone.")) return;
-    setDepartments((ds) => {
-      const next = ds.filter((d) => d.id !== deptId);
-      if (activeDeptId === deptId) {
-        setActiveDeptId(next[0].id);
-        setActivePageId(next[0].pages[0].id);
-      }
-      return next;
-    });
+    const next = departments.filter((d) => d.id !== deptId);
+    setDepartments(next);
+    if (activeDeptId === deptId) {
+      setActiveDeptId(next[0].id);
+      setActivePageId(next[0].pages[0].id);
+    }
+    saveNow(next);
   }
 
   function renamePageTo(deptId: string, pageId: string, name: string) {
-    setDepartments((ds) =>
-      ds.map((d) => (d.id === deptId ? { ...d, pages: d.pages.map((p) => (p.id === pageId ? { ...p, name } : p)) } : d))
+    const next = departments.map((d) =>
+      d.id === deptId ? { ...d, pages: d.pages.map((p) => (p.id === pageId ? { ...p, name } : p)) } : d
     );
+    setDepartments(next);
     setRenamePageTarget(null);
+    saveNow(next);
   }
 
   function deletePage(deptId: string, pageId: string) {
@@ -472,13 +550,13 @@ function DashboardApp() {
       return;
     }
     if (!confirm("Delete this page? This can't be undone.")) return;
-    setDepartments((ds) =>
-      ds.map((d) => (d.id === deptId ? { ...d, pages: d.pages.filter((p) => p.id !== pageId) } : d))
-    );
+    const next = departments.map((d) => (d.id === deptId ? { ...d, pages: d.pages.filter((p) => p.id !== pageId) } : d));
+    setDepartments(next);
     if (activePageId === pageId) {
       const remaining = dept.pages.filter((p) => p.id !== pageId);
       setActivePageId(remaining[0].id);
     }
+    saveNow(next);
   }
 
   const canEdit = canEditWidgets(user?.role);
@@ -538,7 +616,6 @@ function DashboardApp() {
               onConnectSheet={handleConnectSheet}
               onImportData={handleImportData}
               onOpenDataModel={() => setShowDataModel(true)}
-              onToggleAutoRefresh={(enabled) => updatePage({ autoRefresh: enabled })}
             />
 
             <FilterBar
