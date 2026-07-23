@@ -4,6 +4,13 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Rebuilt shared storage as normalized tables instead of one JSON blob:**
+Every previous save wrote the *entire* dashboard (all teams, all pages, all widgets, and for a while all spreadsheet rows too) as one JSON object — so even renaming a single chart re-uploaded everything else along with it. This is now three small tables (`teams`, `pages`, `widgets`), each holding one row per item:
+- Editing one chart's title now writes to exactly one small widget row — not the whole dashboard.
+- This should resolve the recurring Supabase "Disk IO Budget" warnings and the intermittent save failures that came with them.
+- **You need to run new SQL if you already had shared storage set up** — see "Setting up shared storage" below (your old `app_state` table can be dropped).
+- Which team/page you're currently looking at is now a personal, local-only preference (like a browser bookmark) rather than shared data — no reason for that to sync to everyone else.
+
 **Fixed excessive Supabase usage (Disk IO exhaustion warning):**
 The app used to push a full save to the shared database on almost every small edit (typing a chart title, moving a filter, resizing a widget's parent, etc.), which could exhaust a free-tier Supabase project's daily Disk IO budget and cause intermittent failures that looked like CORS errors. This is now much lighter:
 - Small edits are saved **locally only** (instant, free) so your own browser never loses your work.
@@ -75,7 +82,9 @@ Admins manage who has access from inside the app now: click **Manage Users** in 
 
 ## Setting up shared storage (so everyone sees the same data)
 
-By default, all the dashboard data (teams, pages, charts, filters, and the user list) lives only in your own browser's local storage — great for trying things out, but nobody else sees your changes, and switching browsers/devices loses it.
+By default, all the dashboard data (teams, pages, widgets, filters, and the user list) lives only in your own browser's local storage — great for trying things out, but nobody else sees your changes, and switching browsers/devices loses it.
+
+Data is stored in **normalized tables** — one row per team, one row per page, one row per widget — rather than one giant JSON blob. This keeps every individual write small regardless of how large your dashboard grows, which matters a lot on Supabase's free tier (a single-blob design that re-saves everything on every edit can exhaust the free tier's daily Disk IO budget surprisingly fast once a few thousand spreadsheet rows are involved).
 
 To make it real and shared across your whole team (free, ~10 minutes):
 
@@ -83,10 +92,35 @@ To make it real and shared across your whole team (free, ~10 minutes):
 2. In your new project, go to the **SQL Editor** (left sidebar) → **New query**, paste this, and click **Run**:
 
    ```sql
-   create table app_state (
+   create table teams (
      id text primary key,
-     data jsonb not null,
-     updated_at timestamptz default now()
+     name text not null,
+     created_at timestamptz default now()
+   );
+
+   create table pages (
+     id text primary key,
+     team_id text not null references teams(id) on delete cascade,
+     name text not null,
+     source_type text,
+     sheet_url text,
+     sheet_tab_title text,
+     last_updated timestamptz,
+     columns jsonb default '[]',
+     rows jsonb default '[]',
+     measures jsonb default '[]',
+     calculated_columns jsonb default '[]',
+     active_filters jsonb default '[]',
+     widget_order jsonb default '[]',
+     created_at timestamptz default now()
+   );
+
+   create table widgets (
+     id text primary key,
+     page_id text not null references pages(id) on delete cascade,
+     kind text not null,
+     config jsonb not null,
+     created_at timestamptz default now()
    );
 
    create table app_users (
@@ -95,33 +129,37 @@ To make it real and shared across your whole team (free, ~10 minutes):
      created_at timestamptz default now()
    );
 
-   alter table app_state enable row level security;
+   alter table teams enable row level security;
+   alter table pages enable row level security;
+   alter table widgets enable row level security;
    alter table app_users enable row level security;
 
    -- This app authenticates with its own email allow-list rather than
    -- Supabase Auth, so these policies simply allow the anon key full
    -- access. That matches this project's existing "client-side gate"
-   -- trust model, just now shared across devices instead of siloed to one
+   -- trust model, just shared across devices instead of siloed to one
    -- browser. Tighten this (e.g. real Supabase Auth + per-row policies)
    -- before storing anything sensitive - see "Making it production-ready".
-   create policy "anon full access" on app_state for all using (true) with check (true);
+   create policy "anon full access" on teams for all using (true) with check (true);
+   create policy "anon full access" on pages for all using (true) with check (true);
+   create policy "anon full access" on widgets for all using (true) with check (true);
    create policy "anon full access" on app_users for all using (true) with check (true);
 
-   alter publication supabase_realtime add table app_state;
+   alter publication supabase_realtime add table teams;
+   alter publication supabase_realtime add table pages;
+   alter publication supabase_realtime add table widgets;
    alter publication supabase_realtime add table app_users;
 
    -- Without this, Postgres only sends the primary key (not the actual
    -- changed data) in realtime UPDATE events, so other browsers/devices
    -- never actually receive your changes even though the write succeeded.
-   alter table app_state replica identity full;
+   alter table teams replica identity full;
+   alter table pages replica identity full;
+   alter table widgets replica identity full;
    alter table app_users replica identity full;
    ```
 
-**Already set this up before and having sync issues (edits not appearing on other devices)?** You likely created the tables before the `replica identity full` lines existed. Just run this in the SQL Editor — no need to recreate anything:
-```sql
-alter table app_state replica identity full;
-alter table app_users replica identity full;
-```
+**Upgrading from an older version of this project?** That version used a single `app_state` table holding everything as one JSON blob. This version replaces it with the `teams`/`pages`/`widgets` tables above — run the SQL above to create them (your old `app_state` table can just be dropped, or left alone and ignored: `drop table if exists app_state;`).
 
 3. Go to **Settings → API** in the left sidebar. Copy the **Project URL** and the **anon public** key.
 4. Add them to your `.env` file (copy `.env.example` if you haven't already):

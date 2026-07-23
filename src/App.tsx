@@ -18,9 +18,11 @@ import { DataSourcesView } from "./components/DataSourcesView";
 import { UserManagement } from "./components/UserManagement";
 import { DataModelPanel } from "./components/DataModelPanel";
 import { fetchSheetAsRows } from "./lib/sheets";
-import { loadRemoteState, saveRemoteState, subscribeToRemoteState } from "./lib/remoteState";
+import {
+  loadAllTeams, saveTeamRemote, deleteTeamRemote, savePageRemote, deletePageRemote,
+  saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges,
+} from "./lib/remoteDb";
 import { savePersistedState } from "./lib/persistence";
-import { TAB_SESSION_ID } from "./lib/sessionId";
 import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
@@ -98,37 +100,37 @@ function DashboardApp() {
     applyTheme(theme);
   }, [theme]);
 
-  const receivedLiveUpdateRef = useRef(false);
-
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      const persisted = await loadRemoteState();
+      const loaded = await loadAllTeams();
       if (cancelled) return;
-      // If a realtime update already arrived while this initial fetch was
-      // still in flight, that update is newer — don't let this stale fetch
-      // stomp on it (this was silently reverting people's edits before).
-      if (persisted && !receivedLiveUpdateRef.current) {
-        setDepartments(persisted.departments);
-        setActiveDeptId(persisted.activeDeptId);
-        setActivePageId(persisted.activePageId);
+      if (loaded && loaded.length > 0) {
+        setDepartments(loaded);
+        setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
+        setActivePageId((prev) =>
+          loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
+        );
+      } else if (user?.role === "admin") {
+        // Nothing saved yet (brand-new Supabase project) — seed the
+        // starting default team/page so it's visible to everyone else too,
+        // not just silently sitting unsaved in this one browser.
+        for (const dept of departments) {
+          await saveTeamRemote(dept);
+          for (const page of dept.pages) await savePageRemote(page, dept.id);
+        }
       }
       setStateReady(true);
     })();
 
-    const unsubscribe = subscribeToRemoteState((state) => {
-      // This tab's own writes echo back through realtime too. Applying that
-      // echo is harmless when nothing else has changed since, but if the
-      // person kept editing in the brief window before the echo arrived,
-      // applying it would revert those newer local edits. Since this event
-      // can only ever be this tab's own write or another tab's, and we
-      // stamp every write with which tab made it, skip our own.
-      if (state._writerId === TAB_SESSION_ID) return;
-      receivedLiveUpdateRef.current = true;
-      setDepartments(state.departments);
-      setActiveDeptId(state.activeDeptId);
-      setActivePageId(state.activePageId);
+    const unsubscribe = subscribeToTeamsChanges((loaded) => {
+      if (loaded.length === 0) return;
+      setDepartments(loaded);
+      setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
+      setActivePageId((prev) =>
+        loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
+      );
     });
 
     return () => {
@@ -137,13 +139,10 @@ function DashboardApp() {
     };
   }, []);
 
-  const saveFailWarnedRef = useRef(false);
   const isAdmin = user?.role === "admin";
 
-  // Local-only mirror on every change — free (no Supabase cost), keeps the
-  // admin's own browser reliable across their own reloads. The expensive
-  // part (writing to the shared database) is deliberately NOT tied to every
-  // small edit anymore — see the hourly sync below and saveNow().
+  // Which team/page you're currently looking at is a personal navigation
+  // preference, not shared data — kept in local storage only, never synced.
   useEffect(() => {
     const timer = setTimeout(() => {
       savePersistedState({ departments, activeDeptId, activePageId });
@@ -151,21 +150,33 @@ function DashboardApp() {
     return () => clearTimeout(timer);
   }, [departments, activeDeptId, activePageId]);
 
-  async function saveNow(deps: Department[] = departments, includeRows = false) {
-    if (!isAdmin) return; // only the admin account writes to shared storage
-    const ok = await saveRemoteState(
-      { departments: deps, activeDeptId, activePageId, _writerId: TAB_SESSION_ID },
-      { includeRows }
-    );
-    if (!ok && !saveFailWarnedRef.current) {
-      saveFailWarnedRef.current = true;
-      alert(
-        "Your changes are only saved in this browser right now — they didn't save to the shared database. " +
-          "Open the browser console (F12 → Console) for the exact error, or check that the Supabase SQL setup " +
-          "was run on this exact project and that VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY are correct."
-      );
-    }
-    return ok;
+  /** Saves one team's own row (name/id). Admin-only, like all shared writes. */
+  async function syncTeam(dept: { id: string; name: string }) {
+    if (isAdmin) await saveTeamRemote(dept);
+  }
+  async function syncDeleteTeam(id: string) {
+    if (isAdmin) await deleteTeamRemote(id);
+  }
+  /** Saves one page's own config row. Admin-only. Row data is only sent for
+   *  manual/imported pages or when includeRows is explicitly requested
+   *  right after a live fetch — see savePageRemote's own doc comment. */
+  async function syncPage(page: TaskPage, teamId: string, includeRows = false) {
+    if (isAdmin) await savePageRemote(page, teamId, includeRows);
+  }
+  async function syncDeletePage(id: string) {
+    if (isAdmin) await deletePageRemote(id);
+  }
+  /** Saves exactly one widget's own small row. Admin-only. */
+  async function syncWidget(
+    id: string,
+    pageId: string,
+    kind: "chart" | "pivot" | "matrix" | "card" | "text",
+    config: ChartConfig | PivotConfig | MatrixConfig | CardConfig | TextConfig
+  ) {
+    if (isAdmin) await saveWidgetRemote(id, pageId, kind, config);
+  }
+  async function syncDeleteWidget(id: string) {
+    if (isAdmin) await deleteWidgetRemote(id);
   }
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
@@ -207,18 +218,17 @@ function DashboardApp() {
             const { rows, columns } = await fetchSheetAsRows(page.sheetUrl, page.sheetTabTitle);
             const stampedRows = stampRowIds(rows);
             const lastUpdated = new Date().toISOString();
+            const updatedPage = { ...page, rows: stampedRows, columns, lastUpdated };
             current = current.map((d) =>
-              d.id !== dept.id
-                ? d
-                : { ...d, pages: d.pages.map((p) => (p.id !== page.id ? p : { ...p, rows: stampedRows, columns, lastUpdated })) }
+              d.id !== dept.id ? d : { ...d, pages: d.pages.map((p) => (p.id !== page.id ? p : updatedPage)) }
             );
+            syncPage(updatedPage, dept.id, true);
           } catch (e) {
             console.warn(`Hourly sync: couldn't refresh "${page.name}" (not shown to the person):`, e);
           }
         }
       }
       setDepartments(current);
-      saveNow(current, true);
     }
 
     function msUntilNextHour() {
@@ -253,10 +263,10 @@ function DashboardApp() {
 
   async function handleConnectSheet(url: string, tabTitle?: string, sourceType: "csv-link" | "drive" = "csv-link") {
     updatePage({ sheetUrl: url, sheetTabTitle: tabTitle, sourceType });
-    await loadSheet(url, tabTitle);
+    await loadSheet(url, tabTitle, false, sourceType);
   }
 
-  async function loadSheet(url: string, tabTitle?: string, silent = false) {
+  async function loadSheet(url: string, tabTitle?: string, silent = false, sourceType?: "csv-link" | "drive") {
     if (!url) return;
     setRefreshing(true);
     try {
@@ -264,23 +274,31 @@ function DashboardApp() {
       const stampedRows = stampRowIds(rows);
       const lastUpdated = new Date().toISOString();
 
+      // sheetUrl/sheetTabTitle/sourceType come from this call's own params
+      // (not the activePage closure) — when called right after
+      // handleConnectSheet, activePage may still reflect the pre-connect
+      // state since updatePage's state change hasn't landed yet.
+      const updatedPage: TaskPage = {
+        ...activePage,
+        sheetUrl: url,
+        sheetTabTitle: tabTitle,
+        ...(sourceType ? { sourceType } : {}),
+        rows: stampedRows,
+        columns,
+        lastUpdated,
+      };
       const updatedDepartments = departments.map((d) =>
         d.id !== activeDept.id
           ? d
-          : {
-              ...d,
-              pages: d.pages.map((p) =>
-                p.id !== activePage.id ? p : { ...p, rows: stampedRows, columns, lastUpdated }
-              ),
-            }
+          : { ...d, pages: d.pages.map((p) => (p.id !== activePage.id ? p : updatedPage)) }
       );
       setDepartments(updatedDepartments);
 
       // An explicit refresh is a deliberate, infrequent action — worth
       // saving immediately (with the real row data) rather than waiting
       // for the next hourly sync, so a manual refresh actually reflects for
-      // everyone else right away.
-      saveNow(updatedDepartments, true);
+      // everyone else right away. Only this one page's row needs writing.
+      syncPage(updatedPage, activeDept.id, true);
     } catch (e) {
       if (silent) {
         console.warn("Silent auto-load of a connected sheet failed (not shown to the person):", e);
@@ -299,38 +317,50 @@ function DashboardApp() {
   function handleImportData(rows: DataRow[], columns: string[]) {
     const stampedRows = stampRowIds(rows);
     const lastUpdated = new Date().toISOString();
+    const updatedPage: TaskPage = {
+      ...activePage,
+      rows: stampedRows,
+      columns,
+      sourceType: "manual",
+      sheetUrl: "",
+      sheetTabTitle: undefined,
+      lastUpdated,
+    };
     const updatedDepartments = departments.map((d) =>
       d.id !== activeDept.id
         ? d
-        : {
-            ...d,
-            pages: d.pages.map((p) =>
-              p.id !== activePage.id
-                ? p
-                : {
-                    ...p,
-                    rows: stampedRows,
-                    columns,
-                    sourceType: "manual" as const,
-                    sheetUrl: "",
-                    sheetTabTitle: undefined,
-                    lastUpdated,
-                  }
-            ),
-          }
+        : { ...d, pages: d.pages.map((p) => (p.id !== activePage.id ? p : updatedPage)) }
     );
     setDepartments(updatedDepartments);
     // No live source to re-fetch this from later, so it has to be saved
     // right away rather than waiting for the hourly sync — otherwise it
     // would only exist in this browser until the next sync happened to run.
-    saveNow(updatedDepartments, true);
+    syncPage(updatedPage, activeDept.id, true);
+  }
+
+  const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  function debouncedSync(key: string, fn: () => void, delay = 500) {
+    const timers = debounceTimersRef.current;
+    const existing = timers.get(key);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      key,
+      setTimeout(() => {
+        fn();
+        timers.delete(key);
+      }, delay)
+    );
   }
 
   function handleEditCell(rid: string, column: string, value: string) {
     const isNumericCol = activePage.rows.some((r) => typeof r[column] === "number");
     const parsed = isNumericCol && value.trim() !== "" && !isNaN(Number(value)) ? Number(value) : value;
-    updatePage({
-      rows: activePage.rows.map((r) => (r[ROW_ID_KEY] === rid ? { ...r, [column]: parsed } : r)),
+    const updatedRows = activePage.rows.map((r) => (r[ROW_ID_KEY] === rid ? { ...r, [column]: parsed } : r));
+    updatePage({ rows: updatedRows });
+    const pageId = activePage.id, deptId = activeDept.id;
+    debouncedSync(`page:${pageId}`, () => {
+      const page = departments.find((d) => d.id === deptId)?.pages.find((p) => p.id === pageId);
+      if (page) syncPage({ ...page, rows: updatedRows }, deptId, true);
     });
   }
 
@@ -346,6 +376,8 @@ function DashboardApp() {
 
   function setFilters(filters: FilterConfig[]) {
     updatePage({ activeFilters: filters });
+    const pageId = activePage.id, deptId = activeDept.id;
+    debouncedSync(`page:${pageId}`, () => syncPage({ ...activePage, activeFilters: filters }, deptId));
   }
 
   function handleCrossFilter(column: string, value: string) {
@@ -375,24 +407,37 @@ function DashboardApp() {
   // --- Charts ---
   function updateChart(chart: ChartConfig) {
     updatePage({ charts: activePage.charts.map((c) => (c.id === chart.id ? chart : c)) });
+    const pageId = activePage.id;
+    debouncedSync(`widget:${chart.id}`, () => syncWidget(chart.id, pageId, "chart", chart));
   }
   function removeChart(id: string) {
-    updatePage({ charts: activePage.charts.filter((c) => c.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
+    const nextOrder = getWidgetOrder(activePage).filter((w) => w !== id);
+    updatePage({ charts: activePage.charts.filter((c) => c.id !== id), widgetOrder: nextOrder });
+    syncDeleteWidget(id);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
   function addChart() {
     const newChart: ChartConfig = {
       id: crypto.randomUUID(), title: "New chart", type: "bar",
       xKey: effective.columns[0], yKey: effective.columns[1] ?? effective.columns[0],
     };
-    updatePage({ charts: [...activePage.charts, newChart], widgetOrder: [...getWidgetOrder(activePage), newChart.id] });
+    const nextOrder = [...getWidgetOrder(activePage), newChart.id];
+    updatePage({ charts: [...activePage.charts, newChart], widgetOrder: nextOrder });
+    syncWidget(newChart.id, activePage.id, "chart", newChart);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
   // --- Pivots ---
   function updatePivot(pivot: PivotConfig) {
     updatePage({ pivots: activePage.pivots.map((p) => (p.id === pivot.id ? pivot : p)) });
+    const pageId = activePage.id;
+    debouncedSync(`widget:${pivot.id}`, () => syncWidget(pivot.id, pageId, "pivot", pivot));
   }
   function removePivot(id: string) {
-    updatePage({ pivots: activePage.pivots.filter((p) => p.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
+    const nextOrder = getWidgetOrder(activePage).filter((w) => w !== id);
+    updatePage({ pivots: activePage.pivots.filter((p) => p.id !== id), widgetOrder: nextOrder });
+    syncDeleteWidget(id);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
   function addPivot() {
     const newPivot: PivotConfig = {
@@ -401,15 +446,23 @@ function DashboardApp() {
       values: [{ id: crypto.randomUUID(), label: `sum ${effective.columns[1] ?? effective.columns[0]}`, source: { kind: "column", column: effective.columns[1] ?? effective.columns[0], agg: "sum" } }],
       sortDir: "desc", rangeStart: 1, rangeEnd: 10,
     };
-    updatePage({ pivots: [...activePage.pivots, newPivot], widgetOrder: [...getWidgetOrder(activePage), newPivot.id] });
+    const nextOrder = [...getWidgetOrder(activePage), newPivot.id];
+    updatePage({ pivots: [...activePage.pivots, newPivot], widgetOrder: nextOrder });
+    syncWidget(newPivot.id, activePage.id, "pivot", newPivot);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
   // --- Matrices ---
   function updateMatrix(matrix: MatrixConfig) {
     updatePage({ matrices: activePage.matrices.map((m) => (m.id === matrix.id ? matrix : m)) });
+    const pageId = activePage.id;
+    debouncedSync(`widget:${matrix.id}`, () => syncWidget(matrix.id, pageId, "matrix", matrix));
   }
   function removeMatrix(id: string) {
-    updatePage({ matrices: activePage.matrices.filter((m) => m.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
+    const nextOrder = getWidgetOrder(activePage).filter((w) => w !== id);
+    updatePage({ matrices: activePage.matrices.filter((m) => m.id !== id), widgetOrder: nextOrder });
+    syncDeleteWidget(id);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
   function addMatrix() {
     const newMatrix: MatrixConfig = {
@@ -417,42 +470,65 @@ function DashboardApp() {
       rowCol: effective.columns[0], colCol: effective.columns[1] ?? effective.columns[0],
       value: { kind: "column", column: effective.columns[2] ?? effective.columns[0], agg: "sum" },
     };
-    updatePage({ matrices: [...activePage.matrices, newMatrix], widgetOrder: [...getWidgetOrder(activePage), newMatrix.id] });
+    const nextOrder = [...getWidgetOrder(activePage), newMatrix.id];
+    updatePage({ matrices: [...activePage.matrices, newMatrix], widgetOrder: nextOrder });
+    syncWidget(newMatrix.id, activePage.id, "matrix", newMatrix);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
   // --- Cards ---
   function updateCard(card: CardConfig) {
     updatePage({ cards: activePage.cards.map((c) => (c.id === card.id ? card : c)) });
+    const pageId = activePage.id;
+    debouncedSync(`widget:${card.id}`, () => syncWidget(card.id, pageId, "card", card));
   }
   function removeCard(id: string) {
-    updatePage({ cards: activePage.cards.filter((c) => c.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
+    const nextOrder = getWidgetOrder(activePage).filter((w) => w !== id);
+    updatePage({ cards: activePage.cards.filter((c) => c.id !== id), widgetOrder: nextOrder });
+    syncDeleteWidget(id);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
   function addCard() {
     const newCard: CardConfig = {
       id: crypto.randomUUID(), title: "New card",
       value: { kind: "column", column: effective.columns[0], agg: "sum" },
     };
-    updatePage({ cards: [...activePage.cards, newCard], widgetOrder: [...getWidgetOrder(activePage), newCard.id] });
+    const nextOrder = [...getWidgetOrder(activePage), newCard.id];
+    updatePage({ cards: [...activePage.cards, newCard], widgetOrder: nextOrder });
+    syncWidget(newCard.id, activePage.id, "card", newCard);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
   // --- Text/image widgets ---
   function updateText(text: TextConfig) {
     updatePage({ texts: activePage.texts.map((t) => (t.id === text.id ? text : t)) });
+    const pageId = activePage.id;
+    debouncedSync(`widget:${text.id}`, () => syncWidget(text.id, pageId, "text", text));
   }
   function removeText(id: string) {
-    updatePage({ texts: activePage.texts.filter((t) => t.id !== id), widgetOrder: getWidgetOrder(activePage).filter((w) => w !== id) });
+    const nextOrder = getWidgetOrder(activePage).filter((w) => w !== id);
+    updatePage({ texts: activePage.texts.filter((t) => t.id !== id), widgetOrder: nextOrder });
+    syncDeleteWidget(id);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
   function addText() {
     const newText: TextConfig = { id: crypto.randomUUID(), title: "", body: "" };
-    updatePage({ texts: [...activePage.texts, newText], widgetOrder: [...getWidgetOrder(activePage), newText.id] });
+    const nextOrder = [...getWidgetOrder(activePage), newText.id];
+    updatePage({ texts: [...activePage.texts, newText], widgetOrder: nextOrder });
+    syncWidget(newText.id, activePage.id, "text", newText);
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
   // --- Measures & calculated columns ---
   function setMeasures(measures: Measure[]) {
     updatePage({ measures });
+    const pageId = activePage.id, deptId = activeDept.id;
+    debouncedSync(`page:${pageId}`, () => syncPage({ ...activePage, measures }, deptId));
   }
   function setCalculatedColumns(calculatedColumns: CalculatedColumn[]) {
     updatePage({ calculatedColumns });
+    const pageId = activePage.id, deptId = activeDept.id;
+    debouncedSync(`page:${pageId}`, () => syncPage({ ...activePage, calculatedColumns }, deptId));
   }
 
   // A single shared display order lets any widget kind sit next to any
@@ -485,6 +561,8 @@ function DashboardApp() {
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
     updatePage({ widgetOrder: next });
+    const pageId = activePage.id, deptId = activeDept.id;
+    debouncedSync(`page:${pageId}`, () => syncPage({ ...activePage, widgetOrder: next }, deptId));
   }
 
   // --- Team/page structure: add, rename, delete ---
@@ -497,7 +575,8 @@ function DashboardApp() {
     setActivePageId(dept.pages[0].id);
     setAddDeptOpen(false);
     setView("dashboard");
-    saveNow(next);
+    syncTeam(dept);
+    syncPage(dept.pages[0], dept.id);
   }
 
   function addPage(deptId: string, name: string) {
@@ -509,14 +588,14 @@ function DashboardApp() {
     setActivePageId(pageId);
     setAddPageForDept(null);
     setView("dashboard");
-    saveNow(next);
+    syncPage(page, deptId);
   }
 
   function renameDepartmentTo(deptId: string, name: string) {
     const next = departments.map((d) => (d.id === deptId ? { ...d, name } : d));
     setDepartments(next);
     setRenameDept(null);
-    saveNow(next);
+    syncTeam({ id: deptId, name });
   }
 
   function deleteDepartment(deptId: string) {
@@ -531,7 +610,7 @@ function DashboardApp() {
       setActiveDeptId(next[0].id);
       setActivePageId(next[0].pages[0].id);
     }
-    saveNow(next);
+    syncDeleteTeam(deptId); // cascades to that team's pages/widgets in the database too
   }
 
   function renamePageTo(deptId: string, pageId: string, name: string) {
@@ -540,7 +619,8 @@ function DashboardApp() {
     );
     setDepartments(next);
     setRenamePageTarget(null);
-    saveNow(next);
+    const updatedPage = next.find((d) => d.id === deptId)?.pages.find((p) => p.id === pageId);
+    if (updatedPage) syncPage(updatedPage, deptId);
   }
 
   function deletePage(deptId: string, pageId: string) {
@@ -556,7 +636,7 @@ function DashboardApp() {
       const remaining = dept.pages.filter((p) => p.id !== pageId);
       setActivePageId(remaining[0].id);
     }
-    saveNow(next);
+    syncDeletePage(pageId); // cascades to that page's widgets in the database too
   }
 
   const canEdit = canEditWidgets(user?.role);
