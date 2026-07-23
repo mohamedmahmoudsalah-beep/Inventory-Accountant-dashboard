@@ -23,7 +23,10 @@ import {
   saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges,
 } from "./lib/remoteDb";
 import { savePersistedState } from "./lib/persistence";
-import { canEditWidgets, canExport as canExportPerm, canUseFilters } from "./lib/permissions";
+import {
+  canEditWidgets, canExport as canExportPerm, canUseFilters,
+  canManageStructure, canManageDataSources,
+} from "./lib/permissions";
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
 import { getStoredTheme, applyTheme, type Theme } from "./lib/theme";
@@ -139,8 +142,6 @@ function DashboardApp() {
     };
   }, []);
 
-  const isAdmin = user?.role === "admin";
-
   // Which team/page you're currently looking at is a personal navigation
   // preference, not shared data — kept in local storage only, never synced.
   useEffect(() => {
@@ -150,33 +151,41 @@ function DashboardApp() {
     return () => clearTimeout(timer);
   }, [departments, activeDeptId, activePageId]);
 
-  /** Saves one team's own row (name/id). Admin-only, like all shared writes. */
+  /** Saves one team's own row (name/id). Anyone who can manage teams/pages
+   *  (Admin or Manager) can write this — it used to be Admin-only, which
+   *  meant a Manager's new team/page silently never reached Supabase and
+   *  only ever existed in that one browser tab. */
   async function syncTeam(dept: { id: string; name: string }) {
-    if (isAdmin) await saveTeamRemote(dept);
+    if (canManageStructure(user?.role)) await saveTeamRemote(dept);
   }
   async function syncDeleteTeam(id: string) {
-    if (isAdmin) await deleteTeamRemote(id);
+    if (canManageStructure(user?.role)) await deleteTeamRemote(id);
   }
-  /** Saves one page's own config row. Admin-only. Row data is only sent for
-   *  manual/imported pages or when includeRows is explicitly requested
-   *  right after a live fetch — see savePageRemote's own doc comment. */
+  /** Saves one page's own config row. Same Admin/Manager tier as above. Row
+   *  data is only sent for manual/imported pages or when includeRows is
+   *  explicitly requested right after a live fetch — see savePageRemote's
+   *  own doc comment. */
   async function syncPage(page: TaskPage, teamId: string, includeRows = false) {
-    if (isAdmin) await savePageRemote(page, teamId, includeRows);
+    if (canManageStructure(user?.role) || canManageDataSources(user?.role)) {
+      await savePageRemote(page, teamId, includeRows);
+    }
   }
   async function syncDeletePage(id: string) {
-    if (isAdmin) await deletePageRemote(id);
+    if (canManageStructure(user?.role)) await deletePageRemote(id);
   }
-  /** Saves exactly one widget's own small row. Admin-only. */
+  /** Saves exactly one widget's own small row. Admin or Manager, matching
+   *  canEditWidgets (the same permission that lets them edit it in the UI
+   *  in the first place). */
   async function syncWidget(
     id: string,
     pageId: string,
     kind: "chart" | "pivot" | "matrix" | "card" | "text",
     config: ChartConfig | PivotConfig | MatrixConfig | CardConfig | TextConfig
   ) {
-    if (isAdmin) await saveWidgetRemote(id, pageId, kind, config);
+    if (canEditWidgets(user?.role)) await saveWidgetRemote(id, pageId, kind, config);
   }
   async function syncDeleteWidget(id: string) {
-    if (isAdmin) await deleteWidgetRemote(id);
+    if (canEditWidgets(user?.role)) await deleteWidgetRemote(id);
   }
 
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
@@ -185,12 +194,12 @@ function DashboardApp() {
   const autoLoadAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Only the admin account has Drive access (and is the only one who
-    // should be writing shared state) — other roles just wait for the
-    // admin's fetch to sync down via realtime instead of retrying a fetch
-    // that can never succeed for them.
+    // Admin or Manager can both refresh data sources — either one having a
+    // tab open is enough to keep things fresh for everyone else. (This used
+    // to be Admin-only, which meant nothing auto-loaded at all whenever the
+    // Admin simply wasn't logged in at that moment.)
     if (
-      isAdmin &&
+      canManageDataSources(user?.role) &&
       activePage.sheetUrl &&
       activePage.rows.length === 0 &&
       !refreshing &&
@@ -200,14 +209,14 @@ function DashboardApp() {
       loadSheet(activePage.sheetUrl, activePage.sheetTabTitle, /* silent */ true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage.id, activePage.sheetUrl, activePage.rows.length, isAdmin]);
+  }, [activePage.id, activePage.sheetUrl, activePage.rows.length, user?.role]);
 
   // Global, clock-aligned sync instead of continuous per-edit updates: once
   // an hour (on the hour), re-fetch every sheet-connected page across every
   // team and push the result once. The rest of the time, everyone just
   // views whatever was last synced — no repeated fetching or writing.
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canManageDataSources(user?.role)) return;
 
     async function syncAllSheetsNow() {
       let current = departments;
@@ -249,7 +258,7 @@ function DashboardApp() {
       clearInterval(intervalId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  }, [user?.role]);
 
   function updatePage(patch: Partial<TaskPage>) {
     setDepartments((ds) =>
@@ -419,7 +428,7 @@ function DashboardApp() {
   function addChart() {
     const newChart: ChartConfig = {
       id: crypto.randomUUID(), title: "New chart", type: "bar",
-      xKey: effective.columns[0], yKey: effective.columns[1] ?? effective.columns[0],
+      xKey: "", yKey: "",
     };
     const nextOrder = [...getWidgetOrder(activePage), newChart.id];
     updatePage({ charts: [...activePage.charts, newChart], widgetOrder: nextOrder });
@@ -467,8 +476,8 @@ function DashboardApp() {
   function addMatrix() {
     const newMatrix: MatrixConfig = {
       id: crypto.randomUUID(), title: "New matrix",
-      rowCol: effective.columns[0], colCol: effective.columns[1] ?? effective.columns[0],
-      value: { kind: "column", column: effective.columns[2] ?? effective.columns[0], agg: "sum" },
+      rowCol: "", colCol: "",
+      value: { kind: "column", column: "", agg: "sum" },
     };
     const nextOrder = [...getWidgetOrder(activePage), newMatrix.id];
     updatePage({ matrices: [...activePage.matrices, newMatrix], widgetOrder: nextOrder });
@@ -716,7 +725,10 @@ function DashboardApp() {
                   {orderedWidgets.map((w) => {
                     if (w.kind === "chart") {
                       return (
-                        <WidgetShell key={w.item.id} id={w.item.id} kind="chart" canEdit={canEdit} onReorder={reorderWidgets}>
+                        <WidgetShell
+                          key={w.item.id} id={w.item.id} kind="chart" canEdit={canEdit} onReorder={reorderWidgets}
+                          layout={w.item.layout} onResize={(size) => updateChart({ ...w.item, layout: size })}
+                        >
                           <ChartCard
                             config={w.item} rows={filteredRows} columns={effective.columns}
                             canEdit={canEdit} canExport={canExportData}
@@ -728,7 +740,10 @@ function DashboardApp() {
                     }
                     if (w.kind === "pivot") {
                       return (
-                        <WidgetShell key={w.item.id} id={w.item.id} kind="pivot" canEdit={canEdit} onReorder={reorderWidgets}>
+                        <WidgetShell
+                          key={w.item.id} id={w.item.id} kind="pivot" canEdit={canEdit} onReorder={reorderWidgets}
+                          layout={w.item.layout} onResize={(size) => updatePivot({ ...w.item, layout: size })}
+                        >
                           <PivotCard
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
@@ -739,7 +754,10 @@ function DashboardApp() {
                     }
                     if (w.kind === "matrix") {
                       return (
-                        <WidgetShell key={w.item.id} id={w.item.id} kind="matrix" canEdit={canEdit} onReorder={reorderWidgets}>
+                        <WidgetShell
+                          key={w.item.id} id={w.item.id} kind="matrix" canEdit={canEdit} onReorder={reorderWidgets}
+                          layout={w.item.layout} onResize={(size) => updateMatrix({ ...w.item, layout: size })}
+                        >
                           <MatrixCard
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
@@ -750,7 +768,10 @@ function DashboardApp() {
                     }
                     if (w.kind === "card") {
                       return (
-                        <WidgetShell key={w.item.id} id={w.item.id} kind="card" canEdit={canEdit} onReorder={reorderWidgets}>
+                        <WidgetShell
+                          key={w.item.id} id={w.item.id} kind="card" canEdit={canEdit} onReorder={reorderWidgets}
+                          layout={w.item.layout} onResize={(size) => updateCard({ ...w.item, layout: size })}
+                        >
                           <CardWidget
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit}
@@ -760,7 +781,10 @@ function DashboardApp() {
                       );
                     }
                     return (
-                      <WidgetShell key={w.item.id} id={w.item.id} kind="text" canEdit={canEdit} onReorder={reorderWidgets}>
+                      <WidgetShell
+                        key={w.item.id} id={w.item.id} kind="text" canEdit={canEdit} onReorder={reorderWidgets}
+                        layout={w.item.layout} onResize={(size) => updateText({ ...w.item, layout: size })}
+                      >
                         <TextWidget config={w.item} canEdit={canEdit} onChange={updateText} onRemove={() => removeText(w.item.id)} />
                       </WidgetShell>
                     );

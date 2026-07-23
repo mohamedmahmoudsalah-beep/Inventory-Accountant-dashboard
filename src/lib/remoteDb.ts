@@ -142,6 +142,15 @@ export async function savePageRemote(page: TaskPage, teamId: string, includeRows
 
   const shouldIncludeRows = includeRows || page.sourceType === "manual";
 
+  // IMPORTANT: when we're not deliberately (re)writing row data, we omit the
+  // `rows` key from the payload entirely rather than sending `[]`. PostgREST's
+  // upsert only overwrites columns actually present in the request body, so
+  // leaving `rows` out here preserves whatever full dataset is already
+  // sitting in Supabase from the last real fetch/import. Sending `[]` used to
+  // blank out that column on every unrelated save (a filter change, a widget
+  // reorder, a new measure, ...), which then propagated to every other
+  // browser via realtime and made the page look empty until someone hit
+  // "Refresh data" again.
   const { error } = await supabase.from(PAGES).upsert({
     id: page.id,
     team_id: teamId,
@@ -151,7 +160,7 @@ export async function savePageRemote(page: TaskPage, teamId: string, includeRows
     sheet_tab_title: page.sheetTabTitle || null,
     last_updated: page.lastUpdated,
     columns: page.columns,
-    rows: shouldIncludeRows ? page.rows : [],
+    ...(shouldIncludeRows ? { rows: page.rows } : {}),
     measures: page.measures,
     calculated_columns: page.calculatedColumns,
     active_filters: page.activeFilters,

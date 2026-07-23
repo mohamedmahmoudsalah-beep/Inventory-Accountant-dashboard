@@ -1,4 +1,5 @@
-import { Download, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Download, Trash2, Settings2 } from "lucide-react";
 import type { DataRow, Measure, MatrixConfig } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
@@ -25,15 +26,31 @@ function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): 
 }
 
 export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove }: Props) {
-  const rowKeys = Array.from(new Set(rows.map((r) => String(r[config.rowCol] ?? "")))).sort();
-  const colKeys = Array.from(new Set(rows.map((r) => String(r[config.colCol] ?? "")))).sort();
-
-  const grid = rowKeys.map((rk) =>
-    colKeys.map((ck) => {
-      const cellRows = rows.filter((r) => String(r[config.rowCol] ?? "") === rk && String(r[config.colCol] ?? "") === ck);
-      return cellValue(cellRows, config, measures);
-    })
+  // Starts open for a brand-new matrix (no columns picked yet), same as Chart.
+  const [showEditor, setShowEditor] = useState(
+    !config.rowCol || !config.colCol || (config.value.kind === "column" && !config.value.column)
   );
+  const hasColumns = Boolean(
+    config.rowCol && config.colCol && (config.value.kind !== "column" || config.value.column)
+  );
+
+  // Memoized: this used to recompute the full row/col cross-tab (an O(rows
+  // × rowKeys × colKeys) scan) on every render, including ones triggered by
+  // just typing in the title — that's what made editing feel like it froze
+  // the page on large sheets.
+  const { rowKeys, colKeys, grid } = useMemo(() => {
+    if (!hasColumns) return { rowKeys: [] as string[], colKeys: [] as string[], grid: [] as number[][] };
+    const rk = Array.from(new Set(rows.map((r) => String(r[config.rowCol] ?? "")))).sort();
+    const ck = Array.from(new Set(rows.map((r) => String(r[config.colCol] ?? "")))).sort();
+    const g = rk.map((r) =>
+      ck.map((c) => {
+        const cellRows = rows.filter((row) => String(row[config.rowCol] ?? "") === r && String(row[config.colCol] ?? "") === c);
+        return cellValue(cellRows, config, measures);
+      })
+    );
+    return { rowKeys: rk, colKeys: ck, grid: g };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, config.rowCol, config.colCol, config.value, measures, hasColumns]);
 
   const exportRows: DataRow[] = rowKeys.map((rk, i) => {
     const row: DataRow = { [config.rowCol]: rk };
@@ -66,22 +83,30 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
             </button>
           )}
           {canEdit && (
-            <button onClick={onRemove} title="Remove"
-              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]">
-              <Trash2 size={14} />
-            </button>
+            <>
+              <button onClick={() => setShowEditor((s) => !s)} title="Edit"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">
+                <Settings2 size={14} />
+              </button>
+              <button onClick={onRemove} title="Remove"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]">
+                <Trash2 size={14} />
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {canEdit && (
-        <div className="flex flex-wrap gap-2 mb-3 text-xs">
+      {canEdit && showEditor && (
+        <div className="mb-3 p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] flex flex-wrap gap-2 text-xs">
           <select value={config.rowCol} onChange={(e) => onChange({ ...config, rowCol: e.target.value })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+            <option value="" disabled>rows…</option>
             {columns.map((c) => <option key={c} value={c}>rows: {c}</option>)}
           </select>
           <select value={config.colCol} onChange={(e) => onChange({ ...config, colCol: e.target.value })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+            <option value="" disabled>cols…</option>
             {columns.map((c) => <option key={c} value={c}>cols: {c}</option>)}
           </select>
           <select
@@ -94,8 +119,9 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
                 onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "max" | "min" } });
               }
             }}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           >
+            <option value="column::sum" disabled>value…</option>
             <optgroup label="Columns">
               {columns.flatMap((col) =>
                 (["sum", "avg", "count", "max", "min"] as const).map((agg) => (
@@ -112,6 +138,11 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
         </div>
       )}
 
+      {!hasColumns ? (
+        <div className="flex-1 min-h-0 flex items-center justify-center text-center text-xs text-[var(--text-dim)] border border-dashed border-[var(--border)] rounded-lg p-4">
+          Pick rows, columns, and a value above to build this matrix.
+        </div>
+      ) : (
       <div className="flex-1 overflow-auto min-h-0">
         <table className="w-full text-sm">
           <thead>
@@ -138,7 +169,8 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
           </tbody>
         </table>
       </div>
-      <p className="text-[10px] text-[var(--text-dim)] mt-2">Values: {valueLabel}</p>
+      )}
+      <p className="text-[10px] text-[var(--text-dim)] mt-2">Values: {hasColumns ? valueLabel : "—"}</p>
     </div>
   );
 }

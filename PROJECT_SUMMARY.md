@@ -92,9 +92,18 @@ A chat panel that can answer questions about the currently-loaded data and sugge
 ## Known simplifications (by design, not oversights)
 
 - **Auth is an email allow-list, not real authentication** — no passwords, no server-side session verification. It's appropriate for a trusted internal team tool, not for anything with sensitive external-facing access. Moving to Supabase Auth with row-level security is the documented upgrade path if that's ever needed.
-- **Widget "resize"** is real (drag the corner) but widgets still flow in a wrapping layout — there's no free-form x/y canvas positioning yet.
+- **Widget "resize"** is real (drag the corner) and now persists across reloads (saved onto the widget's own config), but widgets still flow in a wrapping layout — there's no free-form x/y canvas positioning yet.
 - **Matrix and Pivot sorting**: Pivot has full sortable headers; Matrix currently only sorts row/column labels alphabetically.
 - **Tab-name selection when pasting a plain link** only works if you've also signed into "Browse from Drive" at least once in that session (otherwise there's no authenticated way to look up tab names for a public link).
+- **The server-side cron refresh only covers public "Anyone with the link" sheets** — private Drive-connected sheets still need a signed-in browser session to refresh, since there's no server-side Google auth for them. See the README's "Setting up server-side data refresh" section.
+
+## Fixed this session (previously real, shipped bugs)
+
+- A page's stored rows could get silently wiped to empty for every other viewer by an unrelated save (a filter change, a widget reorder, ...) — the shared-database write now only touches the `rows` column when it's actually re-fetching data.
+- Manager-role writes (new teams/pages/widgets, data refreshes) were silently dropped before reaching Supabase — the write-gating now matches the actual `permissions.ts` rules instead of checking for Admin literally.
+- Widget resize didn't survive a reload.
+- New charts/matrices auto-picked the first couple of columns instead of letting the person choose.
+- Typing in a chart/matrix's title re-ran the full data aggregation on every keystroke, which felt like freezing on large sheets.
 
 ## Where things stand
 

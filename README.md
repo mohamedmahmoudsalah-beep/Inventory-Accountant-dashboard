@@ -4,6 +4,20 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Fixed a real data-loss bug: shared pages could silently go empty for everyone but the person who last touched them.**
+Any save that wasn't an explicit data refresh (changing a filter, reordering widgets, adding a measure, ...) used to write an empty row array to the shared database for sheet-connected pages, wiping out whatever had been fetched — and that empty state then synced live to every other browser. This is fixed: those saves now leave the stored rows alone instead of blanking them.
+
+**Fixed Manager-role edits/pages never actually reaching the shared database.**
+The functions that write to Supabase were checking for the Admin role literally, even though Managers are supposed to be able to edit widgets and refresh data per the roles table below. A Manager's changes looked fine in their own browser but never saved for anyone else. Now every write is gated by the actual permission it corresponds to (`canEditWidgets`, `canManageStructure`, `canManageDataSources`), so a Manager's work persists like it should.
+
+**Added an optional server-side cron job for data refresh** — see "Setting up server-side data refresh" below. Previously, refreshing a connected sheet only happened from inside someone's open browser tab; now it can also run on Vercel's own schedule with nobody logged in.
+
+**Widget size now actually persists.** Resizing a chart/pivot/matrix by dragging its corner used to reset back to the default size on the next reload. It's now saved onto the widget just like any other edit.
+
+**New charts and matrices no longer guess columns for you.** They used to silently pick the first couple of columns in the sheet; now a new chart/matrix opens straight into its column picker (same pattern Pivot already used), and stays out of the way until you've chosen.
+
+**Fixed chart/matrix editing feeling like it "hung" on large sheets.** Typing in a chart or matrix's title was re-running the full aggregation over every row on every keystroke. That calculation is now cached and only re-runs when the data or the chosen columns actually change.
+
 **Rebuilt shared storage as normalized tables instead of one JSON blob:**
 Every previous save wrote the *entire* dashboard (all teams, all pages, all widgets, and for a while all spreadsheet rows too) as one JSON object — so even renaming a single chart re-uploaded everything else along with it. This is now three small tables (`teams`, `pages`, `widgets`), each holding one row per item:
 - Editing one chart's title now writes to exactly one small widget row — not the whole dashboard.
@@ -173,6 +187,27 @@ Once both variables are set, the app automatically starts reading/writing throug
 
 **Security note:** because there's no real per-user server-side authentication (see "Making it production-ready" below), the anon key embedded in the app has full read/write access to these two tables for anyone who has it — including someone who extracted it from the deployed site's JS bundle, not just people who signed in through the app's UI. This is a reasonable trade-off for an internal tool your team trusts, but it is not equivalent to real access control. Move to Supabase Auth with per-row policies before storing anything sensitive.
 
+## Setting up server-side data refresh (recommended — no browser needed)
+
+Without this, a connected sheet only ever refreshes when someone with an open browser tab either clicks **Refresh data** or happens to have the tab open at the top of the hour (the app's own client-side hourly sync). If nobody's logged in, the data just sits there until someone is — which is confusing when you expect "latest data" to actually mean latest.
+
+This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refresh happens on Vercel's own clock, independent of anyone having the app open:
+
+1. Rename `api/cron-refresh-sheets.example.js` to `api/cron-refresh-sheets.js`.
+2. In Supabase, go to **Settings → API** and copy the **service_role** key (not the anon key — this one bypasses row-level security, which is what a trusted server job needs).
+3. In Vercel's Environment Variables, add:
+   ```
+   SUPABASE_URL=https://your-project-ref.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   CRON_SECRET=a-long-random-string-you-make-up
+   ```
+   (`SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` are server-only — never put them in `.env`/`VITE_...` variables, since anything prefixed `VITE_` ships to the browser.)
+4. Redeploy. `vercel.json` already registers the cron schedule.
+
+**Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 3 * * *` (once daily, ~3am UTC) to match that. If you're on Vercel Pro, you can change it to `0 * * * *` for a real hourly refresh.
+
+**Limitation:** this can only refresh sheets connected via a public "Anyone with the link can view" link (pasted directly, not through "Browse from Drive"). Private Drive-connected sheets need a signed-in Google session to read, which a server cron doesn't have — those still only refresh from an open browser. If you want a sheet to benefit from the server-side cron, share it as "Anyone with the link can view" and connect it by pasting the link instead.
+
 ## Run it locally
 
 ```bash
@@ -182,7 +217,7 @@ npm run dev
 
 Demo accounts (see `src/lib/auth.tsx`):
 - `admin@example.com` → admin (can add teams/tasks, connect sheets, edit charts)
-- `manager@example.com` → viewer (read-only)
+- `manager@example.com` → manager (can refresh data and edit charts/pivots, can't manage users)
 
 ## Connecting data — two ways
 

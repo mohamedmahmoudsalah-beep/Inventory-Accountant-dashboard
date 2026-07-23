@@ -1,9 +1,10 @@
+import { useMemo, useState } from "react";
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
   ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   Treemap, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, LabelList,
 } from "recharts";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Trash2, Settings2 } from "lucide-react";
 import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { parseNumeric } from "../lib/numeric";
@@ -24,21 +25,38 @@ interface Props {
 const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
 
 export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter }: Props) {
+  // Starts open for a brand-new chart (no columns picked yet) so the person
+  // is dropped straight into picking them, instead of the chart silently
+  // guessing the first two columns.
+  const [showEditor, setShowEditor] = useState(!config.xKey || !config.yKey);
+  const hasColumns = Boolean(config.xKey && config.yKey);
+
   // Aggregate rows by xKey, summing yKey — keeps charts readable when the
   // sheet has repeated categories (e.g. multiple rows per month).
-  const aggregated = Object.values(
-    rows.reduce<Record<string, DataRow>>((acc, row) => {
-      const key = String(row[config.xKey]);
-      const yVal = parseNumeric(row[config.yKey]);
-      if (!acc[key]) acc[key] = { [config.xKey]: key, [config.yKey]: 0 };
-      acc[key][config.yKey] = (acc[key][config.yKey] as number) + yVal;
-      return acc;
-    }, {})
-  );
+  // Memoized: this used to re-run over every row on every keystroke (even
+  // typing in the title field triggers a re-render), which is what made
+  // typing feel like it "hung" the page on large sheets. Now it only
+  // recomputes when the actual data or chart-shape inputs change.
+  const aggregated = useMemo(() => {
+    if (!hasColumns) return [];
+    return Object.values(
+      rows.reduce<Record<string, DataRow>>((acc, row) => {
+        const key = String(row[config.xKey]);
+        const yVal = parseNumeric(row[config.yKey]);
+        if (!acc[key]) acc[key] = { [config.xKey]: key, [config.yKey]: 0 };
+        acc[key][config.yKey] = (acc[key][config.yKey] as number) + yVal;
+        return acc;
+      }, {})
+    );
+  }, [rows, config.xKey, config.yKey, hasColumns]);
 
-  const treemapData = aggregated
-    .map((row) => ({ name: String(row[config.xKey]), size: Number(row[config.yKey]) || 0 }))
-    .sort((a, b) => b.size - a.size);
+  const treemapData = useMemo(
+    () =>
+      aggregated
+        .map((row) => ({ name: String(row[config.xKey]), size: Number(row[config.yKey]) || 0 }))
+        .sort((a, b) => b.size - a.size),
+    [aggregated, config.xKey, config.yKey]
+  );
 
   return (
     <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-4 flex flex-col h-full">
@@ -63,23 +81,32 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             </button>
           )}
           {canEdit && (
-            <button
-              onClick={onRemove}
-              title="Remove chart"
-              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]"
-            >
-              <Trash2 size={14} />
-            </button>
+            <>
+              <button
+                onClick={() => setShowEditor((s) => !s)}
+                title="Edit"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]"
+              >
+                <Settings2 size={14} />
+              </button>
+              <button
+                onClick={onRemove}
+                title="Remove chart"
+                className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]"
+              >
+                <Trash2 size={14} />
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {canEdit && (
-        <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
+      {canEdit && showEditor && (
+        <div className="mb-3 p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] flex flex-wrap items-center gap-2 text-xs">
           <select
             value={config.type}
             onChange={(e) => onChange({ ...config, type: e.target.value as ChartConfig["type"] })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           >
             <option value="bar">Bar</option>
             <option value="line">Line</option>
@@ -92,15 +119,17 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           <select
             value={config.xKey}
             onChange={(e) => onChange({ ...config, xKey: e.target.value })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           >
+            <option value="" disabled>X axis…</option>
             {columns.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <select
             value={config.yKey}
             onChange={(e) => onChange({ ...config, yKey: e.target.value })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           >
+            <option value="" disabled>Y axis…</option>
             {columns.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           {config.type !== "treemap" && config.type !== "pie" && (
@@ -116,6 +145,11 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
         </div>
       )}
 
+      {!hasColumns ? (
+        <div className="flex-1 min-h-0 flex items-center justify-center text-center text-xs text-[var(--text-dim)] border border-dashed border-[var(--border)] rounded-lg p-4">
+          Pick an X and Y column above to build this chart.
+        </div>
+      ) : (
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           {config.type === "bar" ? (
@@ -204,6 +238,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           )}
         </ResponsiveContainer>
       </div>
+      )}
     </div>
   );
 }

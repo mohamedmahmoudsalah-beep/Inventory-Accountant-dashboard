@@ -7,6 +7,11 @@ export interface AllowedUser {
 
 export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar" | "treemap";
 
+export interface WidgetLayout {
+  width: number;
+  height: number;
+}
+
 export interface ChartConfig {
   id: string;
   title: string;
@@ -14,6 +19,7 @@ export interface ChartConfig {
   xKey: string;
   yKey: string;
   showValues?: boolean;
+  layout?: WidgetLayout;
 }
 
 export interface FilterConfig {
@@ -50,6 +56,7 @@ export interface PivotConfig {
   sortDir: "desc" | "asc";
   rangeStart: number; // 1-based rank to start showing from
   rangeEnd: number; // 1-based rank to stop showing at (inclusive)
+  layout?: WidgetLayout;
 }
 
 export interface MatrixConfig {
@@ -58,12 +65,14 @@ export interface MatrixConfig {
   rowCol: string;
   colCol: string;
   value: ValueSource;
+  layout?: WidgetLayout;
 }
 
 export interface CardConfig {
   id: string;
   title: string;
   value: ValueSource;
+  layout?: WidgetLayout;
 }
 
 export interface TextConfig {
@@ -71,6 +80,7 @@ export interface TextConfig {
   title: string;
   body: string;
   imageUrl?: string;
+  layout?: WidgetLayout;
 }
 
 /** A reusable named aggregation (optionally conditional, like a simple SUMIF), 
