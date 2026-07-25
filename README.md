@@ -4,6 +4,17 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Fixed the app hanging / showing "no data yet" and a Postgres timeout error during a big sheet refresh.** Refreshing a large sheet writes its rows in many small chunks (see the chunked-storage note above) — but each of those individual writes was also a realtime "something changed" event, and the app was reacting to *every single one* by re-fetching everything from scratch. For a sheet with hundreds of chunks, that meant dozens of overlapping, increasingly heavy reloads firing back to back for the whole duration of the refresh, which is what actually produced the freeze and the `57014 canceling statement due to statement timeout` error — not the save itself. Three changes fix this:
+- The browser doing the writing no longer reloads itself mid-save (it already has the data it just wrote); everyone else's reload is now debounced over a longer window so a whole burst of chunk-writes coalesces into one reload instead of many.
+- Chunks are now written a handful at a time in parallel instead of strictly one at a time, so a big refresh finishes noticeably faster.
+- Reading all the chunks back (on page load, and for that one coalesced reload) is now done in small bounded pages instead of one unbounded query, so it can't itself become the slow query that times out.
+
+If you're still seeing `statement timeout` errors after this update, Supabase's default per-role query timeout is quite short (a few seconds on some projects). Raise it once, in the SQL Editor:
+```sql
+alter role anon set statement_timeout = '30s';
+notify pgrst, 'reload config';
+```
+
 **Fixed large sheets appearing empty (or stale) for everyone except whoever just fetched them.** A page's rows were stored as one single value in the shared database. For a big sheet, that one write could silently exceed Supabase's request-size limit and fail — the browser that did the fetching still looked completely fine (the data was already in its own memory), but the write never actually reached Supabase. Every other device — and even the same Admin account on a fresh reload — kept reading back whatever smaller/older/emptier version had last saved successfully, along with a stale "Last updated" time. Rows are now written in many small chunks instead of one giant blob, so no single write ever has to carry more than a few thousand rows no matter how large the sheet is. **Requires a small SQL update if you already have shared storage set up — see "Setting up shared storage" below.**
 
 **Fixed a real data-loss bug: shared pages could silently go empty for everyone but the person who last touched them.**

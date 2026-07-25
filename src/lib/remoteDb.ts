@@ -26,6 +26,17 @@ const PAGE_ROW_CHUNKS = "page_row_chunks";
 const MAX_CHUNK_ROWS = 3000;
 const MAX_CHUNK_BYTES = 500_000; // ~500KB of serialized JSON per chunk — comfortably small regardless of how many columns a sheet has, so wide sheets still chunk safely even with fewer rows per chunk.
 
+// While this client is busy writing its own page's chunks (which can be
+// hundreds of individual writes for a huge sheet), each one of those writes
+// is itself a realtime change event on PAGE_ROW_CHUNKS. Reacting to every
+// single one with a full reload (see subscribeToTeamsChanges below) used to
+// cause a "reload storm" for the exact duration of a big save: dozens of
+// heavy, overlapping reads piling up, which is what actually produced the
+// hang/timeout ("canceling statement due to statement timeout") — not the
+// writes themselves. This client already has the freshest data in memory
+// (it just wrote it), so it has nothing to gain from reloading itself mid-save.
+let selfWriteDepth = 0;
+
 function chunkRows(rows: DataRow[]): DataRow[][] {
   if (rows.length === 0) return [];
   const chunks: DataRow[][] = [];
@@ -102,6 +113,34 @@ function pageRowToTaskPage(row: PageRow, widgets: WidgetRow[], rows: DataRow[]):
   };
 }
 
+/** Reads every row of page_row_chunks, in bounded pages rather than one
+ *  single query. A single unbounded select here was the actual cause of the
+ *  "canceling statement due to statement timeout" errors on a large
+ *  dataset — Postgres was choking on one giant read, especially while a lot
+ *  of writes were happening at the same time. Reading in modest pages keeps
+ *  each individual query fast and light, regardless of total sheet size. */
+async function loadAllRowChunks(
+  supabase: ReturnType<typeof getSupabase>
+): Promise<{ data: PageRowChunkRow[] | null; error: unknown }> {
+  const PAGE_SIZE = 100; // each chunk row can be up to ~500KB (MAX_CHUNK_BYTES), so keep this modest — 500 of them in one response would defeat the point of paginating at all.
+  const all: PageRowChunkRow[] = [];
+  let offset = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await supabase!
+      .from(PAGE_ROW_CHUNKS)
+      .select("page_id, chunk_index, data")
+      .order("page_id", { ascending: true })
+      .order("chunk_index", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    all.push(...((data ?? []) as PageRowChunkRow[]));
+    if (!data || data.length < PAGE_SIZE) break; // last page
+    offset += PAGE_SIZE;
+  }
+  return { data: all, error: null };
+}
+
 /** Loads every team/page/widget and reconstructs the same Department[] tree
  *  shape the rest of the app already works with. Falls back to this
  *  browser's local storage when Supabase isn't configured or the read
@@ -114,7 +153,7 @@ export async function loadAllTeams(): Promise<Department[] | null> {
     supabase.from(TEAMS).select("*").order("created_at", { ascending: true }),
     supabase.from(PAGES).select("*").order("created_at", { ascending: true }),
     supabase.from(WIDGETS).select("*").order("created_at", { ascending: true }),
-    supabase.from(PAGE_ROW_CHUNKS).select("page_id, chunk_index, data").order("chunk_index", { ascending: true }),
+    loadAllRowChunks(supabase),
   ]);
 
   if (teamsRes.error || pagesRes.error || widgetsRes.error || rowChunksRes.error) {
@@ -203,17 +242,20 @@ async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean>
   if (!supabase) return true;
 
   const chunks = chunkRows(rows);
+  const CONCURRENCY = 4; // a handful of parallel requests moves through hundreds of chunks much faster than one at a time, without opening so many at once that it looks like a flood.
+
+  selfWriteDepth++;
   try {
-    // Sequential, not Promise.all: keeps memory/network pressure predictable
-    // for a page with hundreds of chunks (a multi-million-row sheet), and
-    // means a failure partway through stops early rather than firing every
-    // remaining request anyway.
-    for (let i = 0; i < chunks.length; i++) {
-      const { error } = await supabase
-        .from(PAGE_ROW_CHUNKS)
-        .upsert({ page_id: pageId, chunk_index: i, data: chunks[i] });
-      if (error) {
-        warnSaveFailedOnce("this page's data (a chunk of rows)", error);
+    for (let start = 0; start < chunks.length; start += CONCURRENCY) {
+      const batch = chunks.slice(start, start + CONCURRENCY);
+      const results = await Promise.all(
+        batch.map((chunk, i) =>
+          supabase.from(PAGE_ROW_CHUNKS).upsert({ page_id: pageId, chunk_index: start + i, data: chunk })
+        )
+      );
+      const failed = results.find((r) => r.error);
+      if (failed?.error) {
+        warnSaveFailedOnce("this page's data (a chunk of rows)", failed.error);
         return false;
       }
     }
@@ -230,6 +272,8 @@ async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean>
   } catch (e) {
     warnSaveFailedOnce("this page's data (a chunk of rows)", e);
     return false;
+  } finally {
+    selfWriteDepth--;
   }
 }
 
@@ -315,28 +359,35 @@ export async function deleteWidgetRemote(id: string): Promise<void> {
 
 /** Realtime: rather than trying to merge partial row-level changes into
  *  local state, any change on any of the four tables just triggers a
- *  fresh reload. Simpler and safer than hand-merging partial updates —
- *  and the read itself is comparatively cheap even for a big sheet, since
- *  it's one request per table rather than one giant write. */
+ *  fresh reload. teams/pages/widgets are small and infrequent, so they keep
+ *  a short debounce. page_row_chunks is different: a single big sheet
+ *  refresh can be hundreds of individual chunk writes in quick succession,
+ *  so it gets a longer debounce (to coalesce a whole burst into one reload
+ *  instead of many overlapping ones) and is skipped entirely while THIS
+ *  client is the one doing that writing — it already has the freshest data
+ *  in memory and gains nothing from reloading itself mid-save. Both of
+ *  these were root causes of the app appearing to hang / occasionally
+ *  timing out while a large sheet was being refreshed. */
 export function subscribeToTeamsChanges(onChange: (departments: Department[]) => void): () => void {
   const supabase = getSupabase();
   if (!supabase) return () => {};
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  function reload() {
+  function reload(delay: number) {
+    if (selfWriteDepth > 0) return; // we're mid-save ourselves — our own local state is already the freshest there is
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
       const departments = await loadAllTeams();
       if (departments) onChange(departments);
-    }, 300);
+    }, delay);
   }
 
   const channel = supabase
     .channel("teams_pages_widgets_changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: TEAMS }, reload)
-    .on("postgres_changes", { event: "*", schema: "public", table: PAGES }, reload)
-    .on("postgres_changes", { event: "*", schema: "public", table: WIDGETS }, reload)
-    .on("postgres_changes", { event: "*", schema: "public", table: PAGE_ROW_CHUNKS }, reload)
+    .on("postgres_changes", { event: "*", schema: "public", table: TEAMS }, () => reload(300))
+    .on("postgres_changes", { event: "*", schema: "public", table: PAGES }, () => reload(300))
+    .on("postgres_changes", { event: "*", schema: "public", table: WIDGETS }, () => reload(300))
+    .on("postgres_changes", { event: "*", schema: "public", table: PAGE_ROW_CHUNKS }, () => reload(2500))
     .subscribe((status, err) => {
       if (status === "CHANNEL_ERROR" || err) {
         console.error("Supabase: realtime subscription for teams/pages/widgets failed to connect.", err ?? status);
