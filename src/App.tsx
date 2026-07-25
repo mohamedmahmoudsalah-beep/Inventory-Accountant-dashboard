@@ -86,6 +86,10 @@ function DashboardApp() {
   const { user } = useAuth();
 
   const [departments, setDepartments] = useState<Department[]>([makeDefaultDepartment("sales", "Sales")]);
+  const departmentsRef = useRef(departments);
+  useEffect(() => {
+    departmentsRef.current = departments;
+  }, [departments]);
   const [activeDeptId, setActiveDeptId] = useState("sales");
   const [activePageId, setActivePageId] = useState("sales-overview");
   const [stateReady, setStateReady] = useState(false);
@@ -151,26 +155,29 @@ function DashboardApp() {
       setStateReady(true);
     })();
 
-    const unsubscribe = subscribeToTeamsChanges((loaded) => {
-      if (loaded.length === 0) return;
-      // Don't let an incoming realtime update (someone else's change,
-      // possibly to a different page entirely) stomp on a page whose fetch/
-      // import is sitting here waiting for you to click "Save to shared
-      // database" — the server's copy is older than what's in memory here.
-      const pending = pendingRowSaveRef.current;
-      const merged = pending
-        ? loaded.map((d) =>
-            d.id !== pending.deptId
-              ? d
-              : { ...d, pages: d.pages.map((p) => (p.id !== pending.page.id ? p : pending.page)) }
-          )
-        : loaded;
-      setDepartments(merged);
-      setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
-      setActivePageId((prev) =>
-        loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
-      );
-    });
+    const unsubscribe = subscribeToTeamsChanges(
+      () => departmentsRef.current,
+      (loaded) => {
+        if (loaded.length === 0) return;
+        // Extra safety net: don't let an incoming update stomp on a page
+        // whose fetch/import is sitting here waiting for you to click
+        // "Save to shared database" — the server's copy is older than
+        // what's in memory here.
+        const pending = pendingRowSaveRef.current;
+        const merged = pending
+          ? loaded.map((d) =>
+              d.id !== pending.deptId
+                ? d
+                : { ...d, pages: d.pages.map((p) => (p.id !== pending.page.id ? p : pending.page)) }
+            )
+          : loaded;
+        setDepartments(merged);
+        setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
+        setActivePageId((prev) =>
+          loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
+        );
+      }
+    );
 
     return () => {
       cancelled = true;

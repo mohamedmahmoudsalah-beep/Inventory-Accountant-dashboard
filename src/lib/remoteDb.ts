@@ -141,48 +141,44 @@ async function loadAllRowChunks(
   return { data: all, error: null };
 }
 
-/** Loads every team/page/widget and reconstructs the same Department[] tree
- *  shape the rest of the app already works with. Falls back to this
- *  browser's local storage when Supabase isn't configured or the read
- *  fails, rather than blocking the app. */
-export async function loadAllTeams(): Promise<Department[] | null> {
+/** Fetches teams/pages/widgets only — no row data. Used both for the one
+ *  true full load at startup and for every metadata-only realtime reload
+ *  (a rename, a filter change, a widget edit, ...), which never needs to
+ *  touch row data at all. */
+async function fetchTeamsPagesWidgets(): Promise<
+  { teams: TeamRow[]; pages: PageRow[]; widgets: WidgetRow[] } | null
+> {
   const supabase = getSupabase();
-  if (!supabase) return loadPersistedState()?.departments ?? null;
-
-  const [teamsRes, pagesRes, widgetsRes, rowChunksRes] = await Promise.all([
+  if (!supabase) return null;
+  const [teamsRes, pagesRes, widgetsRes] = await Promise.all([
     supabase.from(TEAMS).select("*").order("created_at", { ascending: true }),
     supabase.from(PAGES).select("*").order("created_at", { ascending: true }),
     supabase.from(WIDGETS).select("*").order("created_at", { ascending: true }),
-    loadAllRowChunks(supabase),
   ]);
-
-  if (teamsRes.error || pagesRes.error || widgetsRes.error || rowChunksRes.error) {
+  if (teamsRes.error || pagesRes.error || widgetsRes.error) {
     console.error(
-      "Supabase: failed to load teams/pages/widgets, falling back to local storage.",
-      teamsRes.error ?? pagesRes.error ?? widgetsRes.error ?? rowChunksRes.error
+      "Supabase: failed to load teams/pages/widgets metadata.",
+      teamsRes.error ?? pagesRes.error ?? widgetsRes.error
     );
-    return loadPersistedState()?.departments ?? null;
+    return null;
   }
+  return {
+    teams: (teamsRes.data ?? []) as TeamRow[],
+    pages: (pagesRes.data ?? []) as PageRow[],
+    widgets: (widgetsRes.data ?? []) as WidgetRow[],
+  };
+}
 
-  const teams = (teamsRes.data ?? []) as TeamRow[];
-  const pages = (pagesRes.data ?? []) as PageRow[];
-  const widgets = (widgetsRes.data ?? []) as WidgetRow[];
-  const rowChunks = (rowChunksRes.data ?? []) as PageRowChunkRow[];
-  if (teams.length === 0) return null; // nothing saved yet - let the caller seed defaults
-
+function buildDepartments(
+  teams: TeamRow[],
+  pages: PageRow[],
+  widgets: WidgetRow[],
+  rowsByPage: Map<string, DataRow[]>
+): Department[] {
   const widgetsByPage = new Map<string, WidgetRow[]>();
   widgets.forEach((w) => {
     if (!widgetsByPage.has(w.page_id)) widgetsByPage.set(w.page_id, []);
     widgetsByPage.get(w.page_id)!.push(w);
-  });
-
-  // Chunks already arrive ordered by chunk_index (the query above), so
-  // concatenating them in the order received reconstructs the original row
-  // order correctly.
-  const rowsByPage = new Map<string, DataRow[]>();
-  rowChunks.forEach((c) => {
-    if (!rowsByPage.has(c.page_id)) rowsByPage.set(c.page_id, []);
-    rowsByPage.get(c.page_id)!.push(...(c.data ?? []));
   });
 
   const pagesByTeam = new Map<string, TaskPage[]>();
@@ -193,7 +189,68 @@ export async function loadAllTeams(): Promise<Department[] | null> {
       .push(pageRowToTaskPage(p, widgetsByPage.get(p.id) ?? [], rowsByPage.get(p.id) ?? []));
   });
 
-  const departments = teams.map((t) => ({ id: t.id, name: t.name, pages: pagesByTeam.get(t.id) ?? [] }));
+  return teams.map((t) => ({ id: t.id, name: t.name, pages: pagesByTeam.get(t.id) ?? [] }));
+}
+
+/** Fetches just one page's rows, in bounded pages. Used when a realtime
+ *  event says only that one page's chunks changed — there's no reason to
+ *  re-read anyone else's data just because one page's sheet was refreshed. */
+async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const PAGE_SIZE = 100;
+  const all: DataRow[] = [];
+  let offset = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data, error } = await supabase
+      .from(PAGE_ROW_CHUNKS)
+      .select("chunk_index, data")
+      .eq("page_id", pageId)
+      .order("chunk_index", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) {
+      console.error(`Supabase: failed to load rows for page ${pageId}.`, error);
+      return null;
+    }
+    (data ?? []).forEach((c) => all.push(...((c as PageRowChunkRow).data ?? [])));
+    if (!data || data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return all;
+}
+
+/** Loads every team/page/widget and reconstructs the same Department[] tree
+ *  shape the rest of the app already works with. Falls back to this
+ *  browser's local storage when Supabase isn't configured or the read
+ *  fails, rather than blocking the app. Only used for the one true full
+ *  load at startup — after that, subscribeToTeamsChanges below handles
+ *  metadata and row updates separately and much more surgically. */
+export async function loadAllTeams(): Promise<Department[] | null> {
+  const supabase = getSupabase();
+  if (!supabase) return loadPersistedState()?.departments ?? null;
+
+  const [metadata, rowChunksRes] = await Promise.all([fetchTeamsPagesWidgets(), loadAllRowChunks(supabase)]);
+
+  if (!metadata || rowChunksRes.error) {
+    console.error("Supabase: failed to load teams/pages/widgets, falling back to local storage.", rowChunksRes.error);
+    return loadPersistedState()?.departments ?? null;
+  }
+
+  const { teams, pages, widgets } = metadata;
+  const rowChunks = (rowChunksRes.data ?? []) as PageRowChunkRow[];
+  if (teams.length === 0) return null; // nothing saved yet - let the caller seed defaults
+
+  // Chunks already arrive ordered by page_id then chunk_index (the query
+  // above), so concatenating them in the order received reconstructs the
+  // original row order correctly.
+  const rowsByPage = new Map<string, DataRow[]>();
+  rowChunks.forEach((c) => {
+    if (!rowsByPage.has(c.page_id)) rowsByPage.set(c.page_id, []);
+    rowsByPage.get(c.page_id)!.push(...(c.data ?? []));
+  });
+
+  const departments = buildDepartments(teams, pages, widgets, rowsByPage);
   // Mirror locally too, as an offline fallback.
   savePersistedState({ departments, activeDeptId: departments[0]?.id ?? "", activePageId: departments[0]?.pages[0]?.id ?? "" });
   return departments;
@@ -370,37 +427,76 @@ export async function deleteWidgetRemote(id: string): Promise<void> {
   }
 }
 
-/** Realtime: rather than trying to merge partial row-level changes into
- *  local state, any change on any of the four tables just triggers a
- *  fresh reload. teams/pages/widgets are small and infrequent, so they keep
- *  a short debounce. page_row_chunks is different: a single big sheet
- *  refresh can be hundreds of individual chunk writes in quick succession,
- *  so it gets a longer debounce (to coalesce a whole burst into one reload
- *  instead of many overlapping ones) and is skipped entirely while THIS
- *  client is the one doing that writing — it already has the freshest data
- *  in memory and gains nothing from reloading itself mid-save. Both of
- *  these were root causes of the app appearing to hang / occasionally
- *  timing out while a large sheet was being refreshed. */
-export function subscribeToTeamsChanges(onChange: (departments: Department[]) => void): () => void {
+/** Realtime, split into two independent, much narrower paths instead of one
+ *  "anything changed, reload literally everything" handler:
+ *
+ *  - teams/pages/widgets (metadata) changes reuse whatever rows are already
+ *    known locally for every page — a rename, a filter change, a widget
+ *    edit, adding a team, etc. never implies row data changed, so there's
+ *    no reason to ever re-fetch it here. This is what was actually causing
+ *    "editing literally anything sometimes makes the data disappear": every
+ *    single edit was re-fetching *all* rows for *all* pages from scratch,
+ *    and if that big read was even slightly off (a network hiccup, timing,
+ *    replication lag right after a write), the correct data on screen got
+ *    replaced by an empty/partial one.
+ *  - page_row_chunks changes re-fetch rows for *only* the one page whose
+ *    chunks actually changed (read straight off the realtime payload
+ *    itself), leaving every other page's already-loaded data untouched.
+ *
+ *  Both paths are skipped entirely while THIS client is the one doing the
+ *  writing (selfWriteDepth > 0) — it already has the freshest data in
+ *  memory. Both also simply do nothing on a failed read, rather than
+ *  blanking out whatever was correctly on screen a moment ago. */
+export function subscribeToTeamsChanges(
+  getCurrentDepartments: () => Department[],
+  onChange: (departments: Department[]) => void
+): () => void {
   const supabase = getSupabase();
   if (!supabase) return () => {};
 
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  function reload(delay: number) {
-    if (selfWriteDepth > 0) return; // we're mid-save ourselves — our own local state is already the freshest there is
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      const departments = await loadAllTeams();
-      if (departments) onChange(departments);
-    }, delay);
+  let metadataTimer: ReturnType<typeof setTimeout> | null = null;
+  function reloadMetadata() {
+    if (selfWriteDepth > 0) return;
+    if (metadataTimer) clearTimeout(metadataTimer);
+    metadataTimer = setTimeout(async () => {
+      const metadata = await fetchTeamsPagesWidgets();
+      if (!metadata || metadata.teams.length === 0) return;
+      const existingRowsByPage = new Map<string, DataRow[]>();
+      getCurrentDepartments().forEach((d) => d.pages.forEach((p) => existingRowsByPage.set(p.id, p.rows)));
+      onChange(buildDepartments(metadata.teams, metadata.pages, metadata.widgets, existingRowsByPage));
+    }, 300);
+  }
+
+  const rowsTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function reloadPageRows(pageId: string) {
+    if (selfWriteDepth > 0) return;
+    const existing = rowsTimers.get(pageId);
+    if (existing) clearTimeout(existing);
+    rowsTimers.set(
+      pageId,
+      setTimeout(async () => {
+        rowsTimers.delete(pageId);
+        const rows = await loadPageRows(pageId);
+        if (rows === null) return; // read failed — leave whatever's currently shown alone
+        onChange(
+          getCurrentDepartments().map((d) => ({
+            ...d,
+            pages: d.pages.map((p) => (p.id === pageId ? { ...p, rows } : p)),
+          }))
+        );
+      }, 2500) // a big sheet refresh is hundreds of individual chunk writes in quick succession — coalesce a whole burst into one fetch instead of many overlapping ones
+    );
   }
 
   const channel = supabase
     .channel("teams_pages_widgets_changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: TEAMS }, () => reload(300))
-    .on("postgres_changes", { event: "*", schema: "public", table: PAGES }, () => reload(300))
-    .on("postgres_changes", { event: "*", schema: "public", table: WIDGETS }, () => reload(300))
-    .on("postgres_changes", { event: "*", schema: "public", table: PAGE_ROW_CHUNKS }, () => reload(2500))
+    .on("postgres_changes", { event: "*", schema: "public", table: TEAMS }, reloadMetadata)
+    .on("postgres_changes", { event: "*", schema: "public", table: PAGES }, reloadMetadata)
+    .on("postgres_changes", { event: "*", schema: "public", table: WIDGETS }, reloadMetadata)
+    .on("postgres_changes", { event: "*", schema: "public", table: PAGE_ROW_CHUNKS }, (payload) => {
+      const changed = (payload.new ?? payload.old) as { page_id?: string } | null;
+      if (changed?.page_id) reloadPageRows(changed.page_id);
+    })
     .subscribe((status, err) => {
       if (status === "CHANNEL_ERROR" || err) {
         console.error("Supabase: realtime subscription for teams/pages/widgets failed to connect.", err ?? status);
@@ -408,7 +504,8 @@ export function subscribeToTeamsChanges(onChange: (departments: Department[]) =>
     });
 
   return () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
+    if (metadataTimer) clearTimeout(metadataTimer);
+    rowsTimers.forEach((t) => clearTimeout(t));
     supabase.removeChannel(channel);
   };
 }
