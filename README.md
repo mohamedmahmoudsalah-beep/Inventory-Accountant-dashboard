@@ -4,6 +4,8 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Fixed large sheets appearing empty (or stale) for everyone except whoever just fetched them.** A page's rows were stored as one single value in the shared database. For a big sheet, that one write could silently exceed Supabase's request-size limit and fail — the browser that did the fetching still looked completely fine (the data was already in its own memory), but the write never actually reached Supabase. Every other device — and even the same Admin account on a fresh reload — kept reading back whatever smaller/older/emptier version had last saved successfully, along with a stale "Last updated" time. Rows are now written in many small chunks instead of one giant blob, so no single write ever has to carry more than a few thousand rows no matter how large the sheet is. **Requires a small SQL update if you already have shared storage set up — see "Setting up shared storage" below.**
+
 **Fixed a real data-loss bug: shared pages could silently go empty for everyone but the person who last touched them.**
 Any save that wasn't an explicit data refresh (changing a filter, reordering widgets, adding a measure, ...) used to write an empty row array to the shared database for sheet-connected pages, wiping out whatever had been fetched — and that empty state then synced live to every other browser. This is fixed: those saves now leave the stored rows alone instead of blanking them.
 
@@ -139,6 +141,18 @@ To make it real and shared across your whole team (free, ~10 minutes):
      created_at timestamptz default now()
    );
 
+   -- A page's rows are stored here, split across many small chunks (one row
+   -- of this table per chunk), instead of as one giant value inside pages'
+   -- own `rows` column. See "Why rows are chunked" below for why this
+   -- matters a lot once a sheet gets into the tens/hundreds of thousands of
+   -- rows.
+   create table page_row_chunks (
+     page_id text not null references pages(id) on delete cascade,
+     chunk_index int not null,
+     data jsonb not null default '[]',
+     primary key (page_id, chunk_index)
+   );
+
    create table app_users (
      email text primary key,
      role text not null,
@@ -148,6 +162,7 @@ To make it real and shared across your whole team (free, ~10 minutes):
    alter table teams enable row level security;
    alter table pages enable row level security;
    alter table widgets enable row level security;
+   alter table page_row_chunks enable row level security;
    alter table app_users enable row level security;
 
    -- This app authenticates with its own email allow-list rather than
@@ -159,11 +174,13 @@ To make it real and shared across your whole team (free, ~10 minutes):
    create policy "anon full access" on teams for all using (true) with check (true);
    create policy "anon full access" on pages for all using (true) with check (true);
    create policy "anon full access" on widgets for all using (true) with check (true);
+   create policy "anon full access" on page_row_chunks for all using (true) with check (true);
    create policy "anon full access" on app_users for all using (true) with check (true);
 
    alter publication supabase_realtime add table teams;
    alter publication supabase_realtime add table pages;
    alter publication supabase_realtime add table widgets;
+   alter publication supabase_realtime add table page_row_chunks;
    alter publication supabase_realtime add table app_users;
 
    -- Without this, Postgres only sends the primary key (not the actual
@@ -172,8 +189,39 @@ To make it real and shared across your whole team (free, ~10 minutes):
    alter table teams replica identity full;
    alter table pages replica identity full;
    alter table widgets replica identity full;
+   alter table page_row_chunks replica identity full;
    alter table app_users replica identity full;
    ```
+
+   **If you already ran the old SQL before today** (your `pages` table already exists and has a `rows` column), run this instead of the block above — it only adds what's missing and migrates your existing row data across, without touching your teams/widgets/users:
+
+   ```sql
+   create table if not exists page_row_chunks (
+     page_id text not null references pages(id) on delete cascade,
+     chunk_index int not null,
+     data jsonb not null default '[]',
+     primary key (page_id, chunk_index)
+   );
+   alter table page_row_chunks enable row level security;
+   create policy "anon full access" on page_row_chunks for all using (true) with check (true);
+   alter publication supabase_realtime add table page_row_chunks;
+   alter table page_row_chunks replica identity full;
+
+   -- One-time: move whatever's currently sitting in pages.rows into chunk 0
+   -- for that page (fine even for a big sheet — this only runs once, inside
+   -- Postgres itself, not over the request-size-limited REST API).
+   insert into page_row_chunks (page_id, chunk_index, data)
+   select id, 0, rows from pages
+   where rows is not null and jsonb_array_length(rows) > 0
+   on conflict (page_id, chunk_index) do update set data = excluded.data;
+
+   -- Optional cleanup, once you've confirmed the app is reading correctly
+   -- from page_row_chunks (reload the app and check a large sheet's page):
+   -- alter table pages drop column rows;
+   ```
+
+   **Why rows are chunked instead of one `pages.rows` column:** a single write request has to fit under Supabase's request-size limits. A sheet with a few hundred rows fits fine as one blob — a sheet with 100,000+ rows might not, and when a write like that silently fails, the browser that fetched the data still shows it fine (it's already sitting in that tab's memory), while Supabase itself never actually got the update. Every *other* device just keeps reading whatever smaller/older dataset was last written successfully — which looks exactly like "big sheets don't show data for anyone but me, and even I don't see the newest fetch after a reload." Splitting the data into many small chunks means no single request ever has to carry more than a few thousand rows, no matter how big the whole sheet is.
+
 
 **Upgrading from an older version of this project?** That version used a single `app_state` table holding everything as one JSON blob. This version replaces it with the `teams`/`pages`/`widgets` tables above — run the SQL above to create them (your old `app_state` table can just be dropped, or left alone and ignored: `drop table if exists app_state;`).
 

@@ -203,6 +203,47 @@ function stampRowIds(rows) {
   return rows.map((row) => ({ ...row, [ROW_ID_KEY]: randomUUID() }));
 }
 
+// Mirrors src/lib/remoteDb.ts's chunkRows exactly — a page's rows are
+// stored across many small chunks (one row per chunk in page_row_chunks),
+// not one giant value, so no single write request ever needs to hold more
+// than a small slice of the data regardless of total sheet size.
+const MAX_CHUNK_ROWS = 3000;
+const MAX_CHUNK_BYTES = 500_000;
+function chunkRows(rows) {
+  if (rows.length === 0) return [];
+  const chunks = [];
+  let current = [];
+  let currentBytes = 0;
+  for (const row of rows) {
+    const rowBytes = JSON.stringify(row).length;
+    if (current.length > 0 && (current.length >= MAX_CHUNK_ROWS || currentBytes + rowBytes > MAX_CHUNK_BYTES)) {
+      chunks.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(row);
+    currentBytes += rowBytes;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+async function saveRowsChunked(supabase, pageId, rows) {
+  const chunks = chunkRows(rows);
+  for (let i = 0; i < chunks.length; i++) {
+    const { error } = await supabase
+      .from("page_row_chunks")
+      .upsert({ page_id: pageId, chunk_index: i, data: chunks[i] });
+    if (error) throw error;
+  }
+  const { error: cleanupError } = await supabase
+    .from("page_row_chunks")
+    .delete()
+    .eq("page_id", pageId)
+    .gte("chunk_index", chunks.length);
+  if (cleanupError) throw cleanupError;
+}
+
 export default async function handler(req, res) {
   // Vercel automatically sends this header on scheduled invocations when
   // CRON_SECRET is set, which stops anyone else from hitting this URL and
@@ -247,9 +288,10 @@ export default async function handler(req, res) {
       const stampedRows = stampRowIds(parsed.rows);
       const { error: updateError } = await supabase
         .from("pages")
-        .update({ rows: stampedRows, columns: parsed.columns, last_updated: new Date().toISOString() })
+        .update({ columns: parsed.columns, last_updated: new Date().toISOString() })
         .eq("id", page.id);
       if (updateError) throw updateError;
+      await saveRowsChunked(supabase, page.id, stampedRows);
       results.push({ pageId: page.id, status: "ok", rowCount: stampedRows.length });
     } catch (e) {
       console.warn(`cron-refresh-sheets: failed for page ${page.id}`, e);
