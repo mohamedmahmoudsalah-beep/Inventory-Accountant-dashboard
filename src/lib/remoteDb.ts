@@ -236,8 +236,14 @@ export async function deleteTeamRemote(id: string): Promise<void> {
 
 /** Writes a page's rows in small chunks instead of one giant blob — see the
  *  comment at the top of this file for why. Safe to call with an empty
- *  array (just clears any existing chunks for the page). */
-async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean> {
+ *  array (just clears any existing chunks for the page). onProgress (if
+ *  given) is called after each batch with (chunksDone, totalChunks), so the
+ *  UI can show real progress for a big save instead of it looking frozen. */
+async function saveRowsRemote(
+  pageId: string,
+  rows: DataRow[],
+  onProgress?: (done: number, total: number) => void
+): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return true;
 
@@ -246,6 +252,7 @@ async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean>
 
   selfWriteDepth++;
   try {
+    onProgress?.(0, chunks.length);
     for (let start = 0; start < chunks.length; start += CONCURRENCY) {
       const batch = chunks.slice(start, start + CONCURRENCY);
       const results = await Promise.all(
@@ -258,6 +265,7 @@ async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean>
         warnSaveFailedOnce("this page's data (a chunk of rows)", failed.error);
         return false;
       }
+      onProgress?.(Math.min(start + CONCURRENCY, chunks.length), chunks.length);
     }
     // Clean up any leftover chunks from a previous, larger version of this
     // page's data (e.g. the sheet had more rows before) — otherwise stale
@@ -283,7 +291,12 @@ async function saveRowsRemote(pageId: string, rows: DataRow[]): Promise<boolean>
  *  pages with no live source (manual imports) or right after a live fetch —
  *  sheet-connected pages can always be re-fetched, so their (potentially
  *  huge) row data doesn't need to be re-sent on every unrelated edit. */
-export async function savePageRemote(page: TaskPage, teamId: string, includeRows = false): Promise<void> {
+export async function savePageRemote(
+  page: TaskPage,
+  teamId: string,
+  includeRows = false,
+  onRowSaveProgress?: (done: number, total: number) => void
+): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
 
@@ -313,7 +326,7 @@ export async function savePageRemote(page: TaskPage, teamId: string, includeRows
     return;
   }
 
-  if (shouldIncludeRows) await saveRowsRemote(page.id, page.rows);
+  if (shouldIncludeRows) await saveRowsRemote(page.id, page.rows, onRowSaveProgress);
 }
 
 export async function deletePageRemote(id: string): Promise<void> {

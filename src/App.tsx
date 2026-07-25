@@ -99,6 +99,30 @@ function DashboardApp() {
   const [renamePageTarget, setRenamePageTarget] = useState<{ deptId: string; pageId: string } | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
 
+  // Fetching a sheet or importing a file updates local state right away
+  // (so you see it instantly), but the — potentially slow, for a huge sheet
+  // — write to the shared database is deferred until you explicitly click
+  // "Save to shared database" next to Refresh, instead of firing
+  // automatically. This is what was making a big refresh feel like it
+  // could hang/freeze unpredictably: now that write only ever starts when
+  // you choose to start it, with visible progress.
+  const [pendingRowSave, setPendingRowSave] = useState<{ deptId: string; page: TaskPage } | null>(null);
+  const pendingRowSaveRef = useRef(pendingRowSave);
+  useEffect(() => {
+    pendingRowSaveRef.current = pendingRowSave;
+  }, [pendingRowSave]);
+  const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null);
+
+  useEffect(() => {
+    if (!pendingRowSave) return;
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [pendingRowSave]);
+
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
@@ -129,7 +153,19 @@ function DashboardApp() {
 
     const unsubscribe = subscribeToTeamsChanges((loaded) => {
       if (loaded.length === 0) return;
-      setDepartments(loaded);
+      // Don't let an incoming realtime update (someone else's change,
+      // possibly to a different page entirely) stomp on a page whose fetch/
+      // import is sitting here waiting for you to click "Save to shared
+      // database" — the server's copy is older than what's in memory here.
+      const pending = pendingRowSaveRef.current;
+      const merged = pending
+        ? loaded.map((d) =>
+            d.id !== pending.deptId
+              ? d
+              : { ...d, pages: d.pages.map((p) => (p.id !== pending.page.id ? p : pending.page)) }
+          )
+        : loaded;
+      setDepartments(merged);
       setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
       setActivePageId((prev) =>
         loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
@@ -165,9 +201,12 @@ function DashboardApp() {
    *  data is only sent for manual/imported pages or when includeRows is
    *  explicitly requested right after a live fetch — see savePageRemote's
    *  own doc comment. */
-  async function syncPage(page: TaskPage, teamId: string, includeRows = false) {
+  async function syncPage(
+    page: TaskPage, teamId: string, includeRows = false,
+    onRowProgress?: (done: number, total: number) => void
+  ) {
     if (canManageStructure(user?.role) || canManageDataSources(user?.role)) {
-      await savePageRemote(page, teamId, includeRows);
+      await savePageRemote(page, teamId, includeRows, onRowProgress);
     }
   }
   async function syncDeletePage(id: string) {
@@ -303,11 +342,10 @@ function DashboardApp() {
       );
       setDepartments(updatedDepartments);
 
-      // An explicit refresh is a deliberate, infrequent action — worth
-      // saving immediately (with the real row data) rather than waiting
-      // for the next hourly sync, so a manual refresh actually reflects for
-      // everyone else right away. Only this one page's row needs writing.
-      syncPage(updatedPage, activeDept.id, true);
+      // Deferred: see the "Save to shared database" button in TopBar. A big
+      // sheet's row data can take a while to write; that should only ever
+      // start when you choose to, not silently right after every fetch.
+      setPendingRowSave({ deptId: activeDept.id, page: updatedPage });
     } catch (e) {
       if (silent) {
         console.warn("Silent auto-load of a connected sheet failed (not shown to the person):", e);
@@ -341,10 +379,21 @@ function DashboardApp() {
         : { ...d, pages: d.pages.map((p) => (p.id !== activePage.id ? p : updatedPage)) }
     );
     setDepartments(updatedDepartments);
-    // No live source to re-fetch this from later, so it has to be saved
-    // right away rather than waiting for the hourly sync — otherwise it
-    // would only exist in this browser until the next sync happened to run.
-    syncPage(updatedPage, activeDept.id, true);
+    // Deferred: see the "Save to shared database" button in TopBar.
+    setPendingRowSave({ deptId: activeDept.id, page: updatedPage });
+  }
+
+  async function handleSaveRowsNow() {
+    if (!pendingRowSave) return;
+    setSaveProgress({ done: 0, total: 0 });
+    try {
+      await syncPage(pendingRowSave.page, pendingRowSave.deptId, true, (done, total) =>
+        setSaveProgress({ done, total })
+      );
+    } finally {
+      setSaveProgress(null);
+      setPendingRowSave(null);
+    }
   }
 
   const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -716,6 +765,9 @@ function DashboardApp() {
               onConnectSheet={handleConnectSheet}
               onImportData={handleImportData}
               onOpenDataModel={() => setShowDataModel(true)}
+              hasPendingSave={pendingRowSave?.page.id === activePage.id}
+              saveProgress={pendingRowSave?.page.id === activePage.id ? saveProgress : null}
+              onSaveNow={handleSaveRowsNow}
             />
 
             <FilterBar

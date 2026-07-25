@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma } from "lucide-react";
+import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma, CloudUpload, Check } from "lucide-react";
 import type { DataRow, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
 import { canManageDataSources, canConnectNewData } from "../lib/permissions";
@@ -22,9 +22,19 @@ interface Props {
   onConnectSheet: (url: string, tabTitle?: string, sourceType?: "csv-link" | "drive") => void;
   onImportData: (rows: DataRow[], columns: string[]) => void;
   onOpenDataModel: () => void;
+  /** Set once a fetch/import has updated this page locally but hasn't been
+   *  written to the shared database yet — shows the "Save to shared
+   *  database" button. */
+  hasPendingSave: boolean;
+  /** Set while that save is actually in progress; null the rest of the time. */
+  saveProgress: { done: number; total: number } | null;
+  onSaveNow: () => void;
 }
 
-export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel }: Props) {
+export function TopBar({
+  page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel,
+  hasPendingSave, saveProgress, onSaveNow,
+}: Props) {
   const { user } = useAuth();
   const [showConnect, setShowConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -116,9 +126,11 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
         <div>
           <h1 className="text-lg">{page.name}</h1>
           <p className="text-xs text-[var(--text-dim)] mt-0.5">
-            {page.lastUpdated
-              ? `Last updated ${new Date(page.lastUpdated).toLocaleString()}${page.sheetTabTitle ? ` — tab "${page.sheetTabTitle}"` : ""}`
-              : "Showing sample data — connect a Google Sheet to load real data"}
+            {hasPendingSave
+              ? "Fetched — not saved to the shared database yet. Click \"Save to shared database\" below when you're ready."
+              : page.lastUpdated
+                ? `Last updated ${new Date(page.lastUpdated).toLocaleString()}${page.sheetTabTitle ? ` — tab "${page.sheetTabTitle}"` : ""}`
+                : "Showing sample data — connect a Google Sheet to load real data"}
           </p>
         </div>
 
@@ -170,6 +182,30 @@ export function TopBar({ page, refreshing, onRefresh, onConnectSheet, onImportDa
               {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               Refresh data
             </button>
+          )}
+          {canRefresh && hasPendingSave && (
+            <button
+              onClick={onSaveNow}
+              disabled={saveProgress !== null}
+              title="Nothing you've just fetched/imported is visible to anyone else until you save it"
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white font-medium hover:opacity-90 disabled:opacity-70 animate-pulse disabled:animate-none"
+            >
+              {saveProgress ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  {saveProgress.total > 0 ? `Saving ${saveProgress.done}/${saveProgress.total}…` : "Saving…"}
+                </>
+              ) : (
+                <>
+                  <CloudUpload size={14} /> Save to shared database
+                </>
+              )}
+            </button>
+          )}
+          {canRefresh && !hasPendingSave && saveProgress === null && page.lastUpdated && (
+            <span className="flex items-center gap-1 text-xs text-[var(--text-dim)]" title="Everything here is saved to the shared database">
+              <Check size={13} /> Saved
+            </span>
           )}
         </div>
       </div>
