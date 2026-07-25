@@ -39,16 +39,52 @@
 //   4. Deploy. Vercel will call this endpoint on its own from then on; you
 //      don't need to do anything else, and nobody needs to keep a tab open.
 //
-// IMPORTANT LIMITATION: this can only refresh pages connected via a public
-// "Anyone with the link can view" Google Sheets link (sourceType:
-// "csv-link"). Pages connected via "Browse from Drive" (sourceType:
-// "drive", private/OAuth-only sheets) can't be refreshed from a server with
-// no logged-in user — there's no browser session here to hold a Google
-// access token. Those pages still only refresh when an Admin/Manager has
-// the app open (manually, or via the existing client-side hourly sync). If
-// you want a private sheet to also benefit from this server-side cron,
-// switch its sharing setting to "Anyone with the link can view" and
-// reconnect it in the app as a pasted link instead of via Drive browsing.
+// IMPORTANT LIMITATION → mostly lifted, if you do the optional Drive setup
+// below: pages connected via a public "Anyone with the link can view" link
+// (sourceType: "csv-link") are always refreshed by this cron with no extra
+// setup. Pages connected via "Browse from Drive" (sourceType: "drive",
+// private sheets) need one extra one-time setup step, because a server has
+// no browser session to hold a Google access token — see "Optional: also
+// refreshing private Drive sheets" below. Skip that section entirely and
+// this still works fine for csv-link pages; drive pages will just keep
+// refreshing only from an open browser tab, same as before.
+//
+// ---------------------------------------------------------------------
+// Optional: also refreshing private Drive sheets
+// ---------------------------------------------------------------------
+// This app already locks "Browse from Drive" to a single fixed account
+// (ALLOWED_DRIVE_EMAIL in src/lib/googleDrive.ts — currently
+// mohamed.mahmoudsalah@breadfast.com). Because it's always that one
+// account, you can authorize it ONCE and let the server reuse that
+// authorization indefinitely via a Google OAuth "refresh token", instead of
+// needing a live browser session every time.
+//
+//   1. In Google Cloud Console, open the SAME OAuth client you already
+//      created for VITE_GOOGLE_CLIENT_ID (APIs & Services -> Credentials).
+//      Web-application OAuth clients always have a client secret too, even
+//      though the browser-side sign-in flow this app uses doesn't need it
+//      — click into the client and copy that secret.
+//   2. Add `http://localhost:53682/callback` to that client's "Authorized
+//      redirect URIs" (you can remove it again afterwards; it's only used
+//      for the one-time step below).
+//   3. Run this once, from your own machine, signed into
+//      mohamed.mahmoudsalah@breadfast.com in your browser:
+//        GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node scripts/get-google-refresh-token.example.js
+//      (rename that script to drop ".example" first). It opens a consent
+//      screen, you approve it as that one account, and it prints a
+//      refresh token straight to your terminal.
+//   4. Add these three to Vercel's Environment Variables (server-only —
+//      don't prefix them VITE_, or they'd ship to the browser):
+//        GOOGLE_CLIENT_ID     = same client ID as VITE_GOOGLE_CLIENT_ID
+//        GOOGLE_CLIENT_SECRET = from step 1
+//        GOOGLE_REFRESH_TOKEN = printed in step 3
+//   5. Redeploy. From then on this cron also refreshes source_type="drive"
+//      pages, using a fresh access token it silently exchanges for at the
+//      start of each run — nobody needs to be signed in anywhere.
+//
+// If any of those three env vars are missing, drive-sourced pages are just
+// skipped (logged, not treated as an error) — csv-link pages are
+// unaffected either way.
 
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
@@ -67,9 +103,12 @@ function toCsvUrl(sheetUrl) {
   return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
 }
 
-async function fetchSheetAsRows(sheetUrl) {
-  const csvUrl = toCsvUrl(sheetUrl);
-  const res = await fetch(csvUrl);
+async function fetchCsvSheetAsRows(sheetUrl) {
+  // See src/lib/sheets.ts for why: Google's export endpoint can hand back a
+  // slightly-stale snapshot for the exact same URL, so every call appends a
+  // throwaway cache-busting param and disables any HTTP caching.
+  const csvUrl = `${toCsvUrl(sheetUrl)}&_cb=${Date.now()}`;
+  const res = await fetch(csvUrl, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Sheet fetch failed (status ${res.status}) — is it still shared as "Anyone with the link can view"?`);
   }
@@ -82,6 +121,77 @@ async function fetchSheetAsRows(sheetUrl) {
   const columns = parsed.meta.fields ?? [];
   const rows = parsed.data.filter((r) => Object.values(r).some((v) => v !== "" && v !== null && v !== undefined));
   return { rows, columns };
+}
+
+// Mirrors src/lib/sheets.ts's rowsFromValues exactly (2D values array ->
+// typed rows), duplicated here since this file runs outside the app bundle.
+function rowsFromValues(values) {
+  const [header, ...rest] = values;
+  const columns = header ?? [];
+  const rows = rest
+    .filter((r) => r.some((cell) => cell !== "" && cell !== undefined))
+    .map((r) => {
+      const row = {};
+      columns.forEach((col, i) => {
+        const raw = r[i];
+        const num = Number(raw);
+        row[col] = raw !== "" && raw !== undefined && !isNaN(num) && String(raw).trim() !== "" ? num : raw ?? "";
+      });
+      return row;
+    });
+  return { rows, columns };
+}
+
+let cachedAccessToken = null;
+let cachedAccessTokenExpiresAt = 0;
+
+/** Exchanges the long-lived stored refresh token for a short-lived access
+ *  token. Refresh tokens don't expire from use (only if revoked, unused for
+ *  6 months, or the Google Cloud project's OAuth consent screen is still in
+ *  "Testing" mode, where they expire after 7 days — publish the consent
+ *  screen, or add the account as a "test user", to avoid that). */
+async function getDriveAccessToken() {
+  if (cachedAccessToken && cachedAccessTokenExpiresAt > Date.now()) return cachedAccessToken;
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Couldn't refresh the Google Drive access token (status ${res.status}). Is GOOGLE_REFRESH_TOKEN still valid?`);
+  }
+  const data = await res.json();
+  cachedAccessToken = data.access_token;
+  cachedAccessTokenExpiresAt = Date.now() + (data.expires_in ?? 3600) * 1000 - 30_000; // 30s safety margin
+  return cachedAccessToken;
+}
+
+async function fetchDriveSheetAsRows(sheetUrl, tabTitle) {
+  const accessToken = await getDriveAccessToken();
+  if (!accessToken) return null; // Drive OAuth env vars not configured — caller skips this page
+  const id = extractSheetId(sheetUrl);
+  if (!id) throw new Error("Couldn't parse a spreadsheet ID out of this URL.");
+  const range = tabTitle ? `'${tabTitle}'!A:ZZ` : "A:ZZ";
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" }
+  );
+  if (!res.ok) {
+    throw new Error(`Sheets API fetch failed (status ${res.status}) for spreadsheet ${id}.`);
+  }
+  const data = await res.json();
+  return rowsFromValues(data.values ?? []);
 }
 
 // Mirrors src/lib/rowIds.ts's ROW_ID_KEY/stampRowIds exactly — kept as a
@@ -113,7 +223,7 @@ export default async function handler(req, res) {
     .from("pages")
     .select("id, sheet_url, sheet_tab_title, source_type")
     .not("sheet_url", "is", null)
-    .eq("source_type", "csv-link"); // see the "IMPORTANT LIMITATION" note above
+    .in("source_type", ["csv-link", "drive"]);
 
   if (fetchError) {
     console.error("cron-refresh-sheets: couldn't list pages", fetchError);
@@ -124,11 +234,20 @@ export default async function handler(req, res) {
   for (const page of pages ?? []) {
     if (!page.sheet_url) continue;
     try {
-      const { rows, columns } = await fetchSheetAsRows(page.sheet_url);
-      const stampedRows = stampRowIds(rows);
+      let parsed;
+      if (page.source_type === "drive") {
+        parsed = await fetchDriveSheetAsRows(page.sheet_url, page.sheet_tab_title);
+        if (!parsed) {
+          results.push({ pageId: page.id, status: "skipped", reason: "Drive OAuth env vars not configured — see the setup notes at the top of this file" });
+          continue;
+        }
+      } else {
+        parsed = await fetchCsvSheetAsRows(page.sheet_url);
+      }
+      const stampedRows = stampRowIds(parsed.rows);
       const { error: updateError } = await supabase
         .from("pages")
-        .update({ rows: stampedRows, columns, last_updated: new Date().toISOString() })
+        .update({ rows: stampedRows, columns: parsed.columns, last_updated: new Date().toISOString() })
         .eq("id", page.id);
       if (updateError) throw updateError;
       results.push({ pageId: page.id, status: "ok", rowCount: stampedRows.length });

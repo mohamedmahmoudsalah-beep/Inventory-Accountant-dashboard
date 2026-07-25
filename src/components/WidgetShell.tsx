@@ -88,7 +88,16 @@ export function WidgetShell({ id, kind, canEdit, layout, onReorder, onResize, ch
   }, [canEdit, onResize]);
 
   if (!canEdit) {
-    return <div style={{ width: size.width }} className="max-w-full min-w-0">{children}</div>;
+    // Same size, both dimensions — not just width. Recharts' ResponsiveContainer
+    // (used by Chart) renders at 0px height with no definite ancestor height,
+    // and Card's centered value can squash too; tables (Pivot/Matrix) don't
+    // have this problem since they size themselves from their own content
+    // regardless, which is why only Chart/Card looked like they'd vanished.
+    return (
+      <div style={{ width: size.width, height: size.height }} className="max-w-full min-w-0">
+        {children}
+      </div>
+    );
   }
 
   return (

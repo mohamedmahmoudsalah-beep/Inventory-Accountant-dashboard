@@ -31,13 +31,13 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
   const [showEditor, setShowEditor] = useState(!config.xKey || !config.yKey);
   const hasColumns = Boolean(config.xKey && config.yKey);
 
-  // Aggregate rows by xKey, summing yKey — keeps charts readable when the
+  // Groups rows by xKey, summing yKey — keeps charts readable when the
   // sheet has repeated categories (e.g. multiple rows per month).
   // Memoized: this used to re-run over every row on every keystroke (even
   // typing in the title field triggers a re-render), which is what made
   // typing feel like it "hung" the page on large sheets. Now it only
   // recomputes when the actual data or chart-shape inputs change.
-  const aggregated = useMemo(() => {
+  const grouped = useMemo(() => {
     if (!hasColumns) return [];
     return Object.values(
       rows.reduce<Record<string, DataRow>>((acc, row) => {
@@ -50,11 +50,24 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
     );
   }, [rows, config.xKey, config.yKey, hasColumns]);
 
+  // Top/Bottom-N ranking — same idea as Pivot's rangeStart/rangeEnd. Left
+  // undefined (older charts) means "show everything", unranked, exactly
+  // like before this existed.
+  const aggregated = useMemo(() => {
+    if (!hasColumns) return [];
+    if (config.rangeStart === undefined && config.rangeEnd === undefined) return grouped;
+    const sorted = [...grouped].sort((a, b) => {
+      const av = Number(a[config.yKey]) || 0;
+      const bv = Number(b[config.yKey]) || 0;
+      return config.sortDir === "asc" ? av - bv : bv - av;
+    });
+    const start = Math.max(0, (config.rangeStart ?? 1) - 1);
+    const end = config.rangeEnd ?? sorted.length;
+    return sorted.slice(start, end);
+  }, [grouped, config.yKey, config.sortDir, config.rangeStart, config.rangeEnd, hasColumns]);
+
   const treemapData = useMemo(
-    () =>
-      aggregated
-        .map((row) => ({ name: String(row[config.xKey]), size: Number(row[config.yKey]) || 0 }))
-        .sort((a, b) => b.size - a.size),
+    () => aggregated.map((row) => ({ name: String(row[config.xKey]), size: Number(row[config.yKey]) || 0 })),
     [aggregated, config.xKey, config.yKey]
   );
 
@@ -141,6 +154,36 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               />
               Show values
             </label>
+          )}
+          <span className="w-full basis-full h-0" />
+          <select
+            value={config.sortDir ?? "desc"}
+            onChange={(e) => onChange({ ...config, sortDir: e.target.value as "desc" | "asc", rangeStart: config.rangeStart ?? 1, rangeEnd: config.rangeEnd ?? 10 })}
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="desc">Highest first</option>
+            <option value="asc">Lowest first</option>
+          </select>
+          <span className="text-[var(--text-dim)]">rank</span>
+          <input
+            type="number" min={1} value={config.rangeStart ?? 1}
+            onChange={(e) => onChange({ ...config, rangeStart: Math.max(1, Number(e.target.value) || 1), rangeEnd: config.rangeEnd ?? grouped.length, sortDir: config.sortDir ?? "desc" })}
+            className="w-14 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          />
+          <span className="text-[var(--text-dim)]">to</span>
+          <input
+            type="number" min={1} value={config.rangeEnd ?? grouped.length}
+            onChange={(e) => onChange({ ...config, rangeEnd: Math.max(config.rangeStart ?? 1, Number(e.target.value) || (config.rangeStart ?? 1)), rangeStart: config.rangeStart ?? 1, sortDir: config.sortDir ?? "desc" })}
+            className="w-14 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          />
+          {(config.rangeStart !== undefined || config.rangeEnd !== undefined) && (
+            <button
+              onClick={() => onChange({ ...config, sortDir: undefined, rangeStart: undefined, rangeEnd: undefined })}
+              className="text-[var(--accent)] hover:opacity-80"
+              title="Go back to showing every category, unranked"
+            >
+              Show all
+            </button>
           )}
         </div>
       )}

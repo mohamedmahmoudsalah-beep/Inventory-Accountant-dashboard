@@ -429,6 +429,7 @@ function DashboardApp() {
     const newChart: ChartConfig = {
       id: crypto.randomUUID(), title: "New chart", type: "bar",
       xKey: "", yKey: "",
+      sortDir: "desc", rangeStart: 1, rangeEnd: 10,
     };
     const nextOrder = [...getWidgetOrder(activePage), newChart.id];
     updatePage({ charts: [...activePage.charts, newChart], widgetOrder: nextOrder });
@@ -691,7 +692,17 @@ function DashboardApp() {
         onOpenAssistant={() => setShowAssistant(true)}
       />
 
-      <main className="flex-1 min-w-0">
+      <main className="flex-1 min-w-0 relative">
+        {/* Subtle brand watermark, same treatment as the login page — fixed
+            so it doesn't scroll with content, and non-interactive so it
+            never sits above/blocks any real UI. */}
+        <img
+          src="/breadfast-logo-magenta.png"
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none select-none fixed right-0 bottom-0 w-[26rem] h-[26rem] object-contain opacity-[0.035] rotate-[-8deg] z-0"
+        />
+        <div className="relative z-10">
         {view === "dataSources" ? (
           <DataSourcesView departments={departments} />
         ) : view === "users" ? (
@@ -824,6 +835,7 @@ function DashboardApp() {
             </div>
           </>
         )}
+        </div>
       </main>
 
       {showAssistant && (

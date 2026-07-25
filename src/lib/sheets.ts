@@ -77,7 +77,7 @@ export async function fetchSheetAsRows(sheetUrl: string, tabTitle?: string): Pro
     const range = tabTitle ? `'${tabTitle}'!A:ZZ` : "A:ZZ";
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }
     );
     if (res.ok) {
       const data = await res.json();
@@ -87,8 +87,18 @@ export async function fetchSheetAsRows(sheetUrl: string, tabTitle?: string): Pro
     // the public CSV path below rather than failing outright.
   }
 
-  const csvUrl = toCsvUrl(sheetUrl);
-  const res = await fetch(csvUrl);
+  // `cache: "no-store"` stops the browser itself from ever answering this
+  // fetch out of its own HTTP cache. That alone isn't always enough, though:
+  // Google's export endpoint is also known to sometimes hand back a
+  // just-slightly-stale rendered snapshot for the *same exact URL* (its own
+  // server/CDN-side caching, not the browser's) — a fresh edit in the sheet
+  // can take a little while to show up if you keep asking for that one
+  // identical URL. Appending a throwaway, always-different query param
+  // forces it to be treated as a distinct request each time, which is the
+  // standard workaround and is what actually fixes "refresh brings back an
+  // older version than what I just changed."
+  const csvUrl = `${toCsvUrl(sheetUrl)}&_cb=${Date.now()}`;
+  const res = await fetch(csvUrl, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(
       `Couldn't load the sheet (status ${res.status}). Either use "Browse from Drive" to sign in, or share the sheet as "Anyone with the link can view".`

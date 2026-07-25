@@ -10,7 +10,9 @@ Any save that wasn't an explicit data refresh (changing a filter, reordering wid
 **Fixed Manager-role edits/pages never actually reaching the shared database.**
 The functions that write to Supabase were checking for the Admin role literally, even though Managers are supposed to be able to edit widgets and refresh data per the roles table below. A Manager's changes looked fine in their own browser but never saved for anyone else. Now every write is gated by the actual permission it corresponds to (`canEditWidgets`, `canManageStructure`, `canManageDataSources`), so a Manager's work persists like it should.
 
-**Added an optional server-side cron job for data refresh** — see "Setting up server-side data refresh" below. Previously, refreshing a connected sheet only happened from inside someone's open browser tab; now it can also run on Vercel's own schedule with nobody logged in.
+**Added an optional server-side cron job for data refresh** — see "Setting up server-side data refresh" below. Previously, refreshing a connected sheet only happened from inside someone's open browser tab; now it can also run on Vercel's own schedule with nobody logged in, and (with one extra one-time setup step) that now covers private Drive-connected sheets too, not just public links.
+
+**Fixed "Refresh data" sometimes bringing back an older version than what was just edited.** The fetch to Google's CSV export endpoint had no cache-busting at all, so it could legitimately get served a cached response (by the browser, or by Google's own export endpoint caching that exact URL) instead of the actual latest version. Every refresh now forces a fresh, uncached request.
 
 **Widget size now actually persists.** Resizing a chart/pivot/matrix by dragging its corner used to reset back to the default size on the next reload. It's now saved onto the widget just like any other edit.
 
@@ -206,7 +208,7 @@ This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refr
 
 **Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 3 * * *` (once daily, ~3am UTC) to match that. If you're on Vercel Pro, you can change it to `0 * * * *` for a real hourly refresh.
 
-**Limitation:** this can only refresh sheets connected via a public "Anyone with the link can view" link (pasted directly, not through "Browse from Drive"). Private Drive-connected sheets need a signed-in Google session to read, which a server cron doesn't have — those still only refresh from an open browser. If you want a sheet to benefit from the server-side cron, share it as "Anyone with the link can view" and connect it by pasting the link instead.
+**Limitation, mostly optional to lift:** by default this only refreshes sheets connected via a public "Anyone with the link can view" link. If your "Browse from Drive" sheets are all tied to one fixed account anyway (this app already locks Drive access to a single allowed email), you can also enable refreshing those — see the long comment block at the top of `api/cron-refresh-sheets.example.js` ("Optional: also refreshing private Drive sheets") and the one-time helper script at `scripts/get-google-refresh-token.example.js`. It's a ~5 minute one-time setup (authorize once, get a refresh token, add it to Vercel's env vars) and after that the cron refreshes private Drive sheets too, with nobody needing to be signed in anywhere.
 
 ## Run it locally
 

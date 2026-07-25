@@ -11,8 +11,25 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="min-h-svh flex items-center justify-center bg-[var(--bg)] px-4">
-      <div className="w-full max-w-sm">
+    <div className="min-h-svh relative flex items-center justify-center bg-[var(--bg)] px-4 overflow-hidden">
+      {/* Subtle brand watermark — the real logo, large and very low-opacity,
+          purely decorative (no pointer events) so it never competes with the
+          actual sign-in form. */}
+      <img
+        src="/breadfast-logo-magenta.png"
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none select-none absolute -right-24 -bottom-24 w-[32rem] h-[32rem] object-contain opacity-[0.06] rotate-[-8deg]"
+      />
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(900px 500px at 15% -10%, var(--accent-dim), transparent), radial-gradient(700px 450px at 100% 110%, var(--mint-dim), transparent)",
+        }}
+      />
+
+      <div className="w-full max-w-sm relative">
         <div className="flex items-center gap-2.5 mb-8 justify-center">
           <div className="w-11 h-11 rounded-xl overflow-hidden">
             <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
@@ -22,7 +39,7 @@ export function LoginScreen() {
 
         <form
           onSubmit={handleSubmit}
-          className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-6"
+          className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.25)]"
         >
           <h2 className="text-base mb-1">Sign in</h2>
           <p className="text-sm text-[var(--text-dim)] mb-5">

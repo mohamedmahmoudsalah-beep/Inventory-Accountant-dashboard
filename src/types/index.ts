@@ -20,6 +20,12 @@ export interface ChartConfig {
   yKey: string;
   showValues?: boolean;
   layout?: WidgetLayout;
+  /** Top/Bottom-N ranking, same idea as Pivot's rangeStart/rangeEnd. Left
+   *  undefined on older charts (created before this existed) means "show
+   *  everything", so nothing already-configured silently gets truncated. */
+  sortDir?: "asc" | "desc";
+  rangeStart?: number; // 1-based rank to start showing from
+  rangeEnd?: number; // 1-based rank to stop showing at (inclusive)
 }
 
 export interface FilterConfig {
