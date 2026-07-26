@@ -269,6 +269,25 @@ This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refr
 
 **Limitation, mostly optional to lift:** by default this only refreshes sheets connected via a public "Anyone with the link can view" link. If your "Browse from Drive" sheets are all tied to one fixed account anyway (this app already locks Drive access to a single allowed email), you can also enable refreshing those — see the long comment block at the top of `api/cron-refresh-sheets.example.js` ("Optional: also refreshing private Drive sheets") and the one-time helper script at `scripts/get-google-refresh-token.example.js`. It's a ~5 minute one-time setup (authorize once, get a refresh token, add it to Vercel's env vars) and after that the cron refreshes private Drive sheets too, with nobody needing to be signed in anywhere.
 
+## Keeping Supabase from pausing (optional, fixes the "opens empty, works a moment later" pattern)
+
+Supabase's free tier automatically pauses a project after a period of no API activity. The first request after that can take 10-30+ seconds to wake back up — which shows up in the app as: opens to an empty/placeholder page, then works fine if you wait a moment or refresh. The app now retries this automatically in the background (and shows a "Try again now" button), so it self-heals either way — but if you'd rather it just never happened, keep the project pinged so it never goes to sleep:
+
+1. Rename `api/keep-alive.example.js` to `api/keep-alive.js` and redeploy. This is a tiny endpoint that runs one real (harmless, read-only) Supabase query when hit — that's what actually counts as "activity," unlike pinging the app's own frontend URL (which never touches Supabase at all).
+2. Go to [uptimerobot.com](https://uptimerobot.com) and create a free account.
+3. Click **+ Add New Monitor**.
+4. Monitor type: **HTTP(s)**.
+5. Friendly name: anything, e.g. "Breadfast dashboard keep-alive".
+6. URL: `https://your-app.vercel.app/api/keep-alive` (your actual Vercel domain).
+7. Monitoring interval: 5 minutes (the shortest the free plan allows — plenty often enough).
+8. Save. That's it — UptimeRobot will hit that URL every 5 minutes forever, which is exactly what stops Supabase from ever seeing a long enough gap in activity to pause.
+
+**Does this affect anything else?** No downsides worth worrying about for this use case:
+- **Cost:** both sides are free at this scale. ~288 requests/day is a rounding error against Supabase's free-tier request limits and Vercel's free-tier function-invocation limits — nowhere close to either.
+- **App behavior:** none — it's a background health check nobody using the app ever sees or interacts with.
+- **What it doesn't cover:** this only prevents the *inactivity* auto-pause. It won't help if Supabase pauses/suspends a project for a billing issue or a manual action on your end — those need to be resolved directly in the Supabase dashboard regardless.
+- UptimeRobot's free plan also emails you if the endpoint ever goes down (e.g. a real outage) — a small side benefit, not just an anti-pause trick.
+
 ## Run it locally
 
 ```bash
