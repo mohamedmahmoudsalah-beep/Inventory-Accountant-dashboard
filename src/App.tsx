@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginScreen } from "./components/LoginScreen";
@@ -131,28 +131,24 @@ function DashboardApp() {
     applyTheme(theme);
   }, [theme]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const [loadError, setLoadError] = useState(false);
 
-    (async () => {
-      let result = await loadAllTeams();
-      // A failed read here is usually transient (a momentary network blip,
-      // a slow cold-start) — retry a couple of times with a short backoff
-      // before giving up, rather than requiring a manual page reload.
-      for (let attempt = 0; result.status === "error" && attempt < 2 && !cancelled; attempt++) {
-        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
-        result = await loadAllTeams();
-      }
-      if (cancelled) return;
-      if (result.status === "ok") {
-        setDepartments(result.departments);
-        setActiveDeptId((prev) => (result.departments.some((d) => d.id === prev) ? prev : result.departments[0].id));
-        setActivePageId((prev) =>
-          result.departments.some((d) => d.pages.some((p) => p.id === prev))
-            ? prev
-            : result.departments[0].pages[0]?.id ?? ""
-        );
-      } else if (result.status === "empty" && user?.role === "admin") {
+  const attemptInitialLoad = useCallback(async (isRetry = false) => {
+    const result = await loadAllTeams();
+    if (result.status === "ok") {
+      setLoadError(false);
+      setDepartments(result.departments);
+      setActiveDeptId((prev) => (result.departments.some((d) => d.id === prev) ? prev : result.departments[0].id));
+      setActivePageId((prev) =>
+        result.departments.some((d) => d.pages.some((p) => p.id === prev))
+          ? prev
+          : result.departments[0].pages[0]?.id ?? ""
+      );
+      return true;
+    }
+    if (result.status === "empty") {
+      setLoadError(false);
+      if (!isRetry && user?.role === "admin") {
         // Nothing saved yet (brand-new Supabase project) — seed the
         // starting default team/page so it's visible to everyone else too,
         // not just silently sitting unsaved in this one browser.
@@ -160,27 +156,56 @@ function DashboardApp() {
           await saveTeamRemote(dept);
           for (const page of dept.pages) await savePageRemote(page, dept.id);
         }
-      } else if (result.status === "error") {
-        // The read failed — this is NOT the same as "nothing saved yet", so
-        // never seed a fresh default team here (that used to silently
-        // paper over a transient error by writing a blank team right over
-        // whatever real data just failed to load this one time). Fall back
-        // to whatever this browser has cached locally, if anything, and
-        // otherwise just leave the built-in placeholder on screen — the
-        // realtime subscription or a manual reload will pick up the real
-        // data once the read succeeds.
-        if (result.localFallback && result.localFallback.length > 0) {
-          setDepartments(result.localFallback);
-        }
-        console.error("Supabase: initial load failed — showing cached/placeholder data instead of seeding a new team. Reload the page to retry.");
       }
-      setStateReady(true);
+      return true;
+    }
+    // status === "error": this is NOT the same as "nothing saved yet", so
+    // never seed a fresh default team here — that used to silently paper
+    // over a transient error (or a slow Supabase free-tier cold-start after
+    // a period of inactivity, which can take 10-30+ seconds to respond on
+    // its very first request) by writing a blank team right over whatever
+    // real data just failed to load in time.
+    if (!isRetry && result.localFallback && result.localFallback.length > 0) {
+      setDepartments(result.localFallback);
+    }
+    setLoadError(true);
+    return false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    (async () => {
+      const ok = await attemptInitialLoad(false);
+      if (cancelled) return;
+      setStateReady(true); // render immediately either way — don't block the whole app on retries
+
+      if (!ok) {
+        // Keep quietly retrying in the background — covers both a
+        // momentary blip and a slow cold-start — instead of requiring a
+        // manual page reload. Capped backoff: 2s, 4s, 8s, then every 15s
+        // for as long as it keeps failing.
+        let attempt = 0;
+        const scheduleRetry = () => {
+          const delay = attempt < 3 ? 2000 * 2 ** attempt : 15000;
+          attempt++;
+          retryTimer = setTimeout(async () => {
+            if (cancelled) return;
+            const succeeded = await attemptInitialLoad(true);
+            if (!cancelled && !succeeded) scheduleRetry();
+          }, delay);
+        };
+        scheduleRetry();
+      }
     })();
 
     const unsubscribe = subscribeToTeamsChanges(
       () => departmentsRef.current,
       (loaded) => {
         if (loaded.length === 0) return;
+        setLoadError(false);
         // Extra safety net: don't let an incoming update stomp on a page
         // whose fetch/import is sitting here waiting for you to click
         // "Save to shared database" — the server's copy is older than
@@ -203,11 +228,10 @@ function DashboardApp() {
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       unsubscribe();
     };
-  }, []);
-
-  // Which team/page you're currently looking at is a personal navigation
+  }, [attemptInitialLoad]);
   // preference, not shared data — kept in local storage only, never synced.
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -809,8 +833,20 @@ function DashboardApp() {
 
             <div className="p-6 space-y-4">
               {effective.columns.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--text-dim)]">
-                  No data yet — connect a Google Sheet, import a file, or combine online sheets above to get started.
+                <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--text-dim)] space-y-3">
+                  {loadError ? (
+                    <>
+                      <p>Couldn't reach the shared database just now — this is usually temporary (a slow reconnect, or a brief pause on Supabase's side). Retrying automatically in the background.</p>
+                      <button
+                        onClick={() => attemptInitialLoad(true)}
+                        className="text-sm px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-raised)]"
+                      >
+                        Try again now
+                      </button>
+                    </>
+                  ) : (
+                    <p>No data yet — connect a Google Sheet, import a file, or combine online sheets above to get started.</p>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-4 items-start">
