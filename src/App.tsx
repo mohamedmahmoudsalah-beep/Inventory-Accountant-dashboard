@@ -135,15 +135,24 @@ function DashboardApp() {
     let cancelled = false;
 
     (async () => {
-      const loaded = await loadAllTeams();
+      let result = await loadAllTeams();
+      // A failed read here is usually transient (a momentary network blip,
+      // a slow cold-start) — retry a couple of times with a short backoff
+      // before giving up, rather than requiring a manual page reload.
+      for (let attempt = 0; result.status === "error" && attempt < 2 && !cancelled; attempt++) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        result = await loadAllTeams();
+      }
       if (cancelled) return;
-      if (loaded && loaded.length > 0) {
-        setDepartments(loaded);
-        setActiveDeptId((prev) => (loaded.some((d) => d.id === prev) ? prev : loaded[0].id));
+      if (result.status === "ok") {
+        setDepartments(result.departments);
+        setActiveDeptId((prev) => (result.departments.some((d) => d.id === prev) ? prev : result.departments[0].id));
         setActivePageId((prev) =>
-          loaded.some((d) => d.pages.some((p) => p.id === prev)) ? prev : loaded[0].pages[0]?.id ?? ""
+          result.departments.some((d) => d.pages.some((p) => p.id === prev))
+            ? prev
+            : result.departments[0].pages[0]?.id ?? ""
         );
-      } else if (user?.role === "admin") {
+      } else if (result.status === "empty" && user?.role === "admin") {
         // Nothing saved yet (brand-new Supabase project) — seed the
         // starting default team/page so it's visible to everyone else too,
         // not just silently sitting unsaved in this one browser.
@@ -151,6 +160,19 @@ function DashboardApp() {
           await saveTeamRemote(dept);
           for (const page of dept.pages) await savePageRemote(page, dept.id);
         }
+      } else if (result.status === "error") {
+        // The read failed — this is NOT the same as "nothing saved yet", so
+        // never seed a fresh default team here (that used to silently
+        // paper over a transient error by writing a blank team right over
+        // whatever real data just failed to load this one time). Fall back
+        // to whatever this browser has cached locally, if anything, and
+        // otherwise just leave the built-in placeholder on screen — the
+        // realtime subscription or a manual reload will pick up the real
+        // data once the read succeeds.
+        if (result.localFallback && result.localFallback.length > 0) {
+          setDepartments(result.localFallback);
+        }
+        console.error("Supabase: initial load failed — showing cached/placeholder data instead of seeding a new team. Reload the page to retry.");
       }
       setStateReady(true);
     })();

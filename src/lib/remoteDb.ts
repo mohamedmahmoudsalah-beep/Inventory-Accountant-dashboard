@@ -26,16 +26,35 @@ const PAGE_ROW_CHUNKS = "page_row_chunks";
 const MAX_CHUNK_ROWS = 3000;
 const MAX_CHUNK_BYTES = 500_000; // ~500KB of serialized JSON per chunk — comfortably small regardless of how many columns a sheet has, so wide sheets still chunk safely even with fewer rows per chunk.
 
-// While this client is busy writing its own page's chunks (which can be
-// hundreds of individual writes for a huge sheet), each one of those writes
-// is itself a realtime change event on PAGE_ROW_CHUNKS. Reacting to every
-// single one with a full reload (see subscribeToTeamsChanges below) used to
-// cause a "reload storm" for the exact duration of a big save: dozens of
-// heavy, overlapping reads piling up, which is what actually produced the
-// hang/timeout ("canceling statement due to statement timeout") — not the
-// writes themselves. This client already has the freshest data in memory
-// (it just wrote it), so it has nothing to gain from reloading itself mid-save.
+// While this client is busy writing (anything — a team rename, a widget
+// edit, or a big chunked row save), each write is itself a realtime change
+// event that would otherwise trigger this same client to reload its own
+// just-written data right back. That was pure waste at best (a redundant
+// full-app re-render on every single edit) and actively harmful at worst
+// (see the reload-storm note below). Two mechanisms cover this:
+//  - selfWriteDepth: true for the exact duration of a write that's still
+//    in flight (matters most for the long chunked row save).
+//  - lastSelfWriteAt: a short window after a write's HTTP response has
+//    already come back, since the realtime notification for that same
+//    write is a separate round-trip that can easily arrive a moment later
+//    — by which point selfWriteDepth may already be back to 0.
 let selfWriteDepth = 0;
+let lastSelfWriteAt = 0;
+const SELF_ECHO_WINDOW_MS = 2000;
+
+function isLikelySelfEcho(): boolean {
+  return selfWriteDepth > 0 || Date.now() - lastSelfWriteAt < SELF_ECHO_WINDOW_MS;
+}
+
+async function trackSelfWrite<T>(fn: () => Promise<T>): Promise<T> {
+  selfWriteDepth++;
+  try {
+    return await fn();
+  } finally {
+    selfWriteDepth--;
+    lastSelfWriteAt = Date.now();
+  }
+}
 
 function chunkRows(rows: DataRow[]): DataRow[][] {
   if (rows.length === 0) return [];
@@ -220,26 +239,37 @@ async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
   return all;
 }
 
+export type LoadTeamsResult =
+  | { status: "ok"; departments: Department[] }
+  // Genuinely nothing saved yet (a brand-new Supabase project) — safe for
+  // the caller to seed a starting default team.
+  | { status: "empty" }
+  // The read itself failed (network blip, timeout, misconfigured
+  // credentials, ...). This is NOT the same as "empty" and must never be
+  // treated as one: an Admin's browser hitting a transient read error used
+  // to look identical to "nothing saved yet" and would re-seed a brand new
+  // blank default team right over whatever real data actually exists but
+  // just failed to load this one time.
+  | { status: "error"; localFallback: Department[] | null };
+
 /** Loads every team/page/widget and reconstructs the same Department[] tree
- *  shape the rest of the app already works with. Falls back to this
- *  browser's local storage when Supabase isn't configured or the read
- *  fails, rather than blocking the app. Only used for the one true full
- *  load at startup — after that, subscribeToTeamsChanges below handles
+ *  shape the rest of the app already works with. Only used for the one true
+ *  full load at startup — after that, subscribeToTeamsChanges below handles
  *  metadata and row updates separately and much more surgically. */
-export async function loadAllTeams(): Promise<Department[] | null> {
+export async function loadAllTeams(): Promise<LoadTeamsResult> {
   const supabase = getSupabase();
-  if (!supabase) return loadPersistedState()?.departments ?? null;
+  if (!supabase) return { status: "error", localFallback: loadPersistedState()?.departments ?? null };
 
   const [metadata, rowChunksRes] = await Promise.all([fetchTeamsPagesWidgets(), loadAllRowChunks(supabase)]);
 
   if (!metadata || rowChunksRes.error) {
-    console.error("Supabase: failed to load teams/pages/widgets, falling back to local storage.", rowChunksRes.error);
-    return loadPersistedState()?.departments ?? null;
+    console.error("Supabase: failed to load teams/pages/widgets.", rowChunksRes.error);
+    return { status: "error", localFallback: loadPersistedState()?.departments ?? null };
   }
 
   const { teams, pages, widgets } = metadata;
   const rowChunks = (rowChunksRes.data ?? []) as PageRowChunkRow[];
-  if (teams.length === 0) return null; // nothing saved yet - let the caller seed defaults
+  if (teams.length === 0) return { status: "empty" };
 
   // Chunks already arrive ordered by page_id then chunk_index (the query
   // above), so concatenating them in the order received reconstructs the
@@ -253,7 +283,7 @@ export async function loadAllTeams(): Promise<Department[] | null> {
   const departments = buildDepartments(teams, pages, widgets, rowsByPage);
   // Mirror locally too, as an offline fallback.
   savePersistedState({ departments, activeDeptId: departments[0]?.id ?? "", activePageId: departments[0]?.pages[0]?.id ?? "" });
-  return departments;
+  return { status: "ok", departments };
 }
 
 let saveFailWarned = false;
@@ -272,23 +302,27 @@ function warnSaveFailedOnce(context: string, error: unknown) {
 export async function saveTeamRemote(team: { id: string; name: string }): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  try {
-    const { error } = await supabase.from(TEAMS).upsert({ id: team.id, name: team.name });
-    if (error) warnSaveFailedOnce("a team", error);
-  } catch (e) {
-    warnSaveFailedOnce("a team", e);
-  }
+  await trackSelfWrite(async () => {
+    try {
+      const { error } = await supabase.from(TEAMS).upsert({ id: team.id, name: team.name });
+      if (error) warnSaveFailedOnce("a team", error);
+    } catch (e) {
+      warnSaveFailedOnce("a team", e);
+    }
+  });
 }
 
 export async function deleteTeamRemote(id: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  try {
-    const { error } = await supabase.from(TEAMS).delete().eq("id", id);
-    if (error) warnSaveFailedOnce("a team deletion", error);
-  } catch (e) {
-    warnSaveFailedOnce("a team deletion", e);
-  }
+  await trackSelfWrite(async () => {
+    try {
+      const { error } = await supabase.from(TEAMS).delete().eq("id", id);
+      if (error) warnSaveFailedOnce("a team deletion", error);
+    } catch (e) {
+      warnSaveFailedOnce("a team deletion", e);
+    }
+  });
 }
 
 /** Writes a page's rows in small chunks instead of one giant blob — see the
@@ -307,39 +341,38 @@ async function saveRowsRemote(
   const chunks = chunkRows(rows);
   const CONCURRENCY = 4; // a handful of parallel requests moves through hundreds of chunks much faster than one at a time, without opening so many at once that it looks like a flood.
 
-  selfWriteDepth++;
-  try {
-    onProgress?.(0, chunks.length);
-    for (let start = 0; start < chunks.length; start += CONCURRENCY) {
-      const batch = chunks.slice(start, start + CONCURRENCY);
-      const results = await Promise.all(
-        batch.map((chunk, i) =>
-          supabase.from(PAGE_ROW_CHUNKS).upsert({ page_id: pageId, chunk_index: start + i, data: chunk })
-        )
-      );
-      const failed = results.find((r) => r.error);
-      if (failed?.error) {
-        warnSaveFailedOnce("this page's data (a chunk of rows)", failed.error);
-        return false;
+  return trackSelfWrite(async () => {
+    try {
+      onProgress?.(0, chunks.length);
+      for (let start = 0; start < chunks.length; start += CONCURRENCY) {
+        const batch = chunks.slice(start, start + CONCURRENCY);
+        const results = await Promise.all(
+          batch.map((chunk, i) =>
+            supabase.from(PAGE_ROW_CHUNKS).upsert({ page_id: pageId, chunk_index: start + i, data: chunk })
+          )
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) {
+          warnSaveFailedOnce("this page's data (a chunk of rows)", failed.error);
+          return false;
+        }
+        onProgress?.(Math.min(start + CONCURRENCY, chunks.length), chunks.length);
       }
-      onProgress?.(Math.min(start + CONCURRENCY, chunks.length), chunks.length);
+      // Clean up any leftover chunks from a previous, larger version of this
+      // page's data (e.g. the sheet had more rows before) — otherwise stale
+      // rows from an old chunk index would silently tag along forever.
+      const { error: cleanupError } = await supabase
+        .from(PAGE_ROW_CHUNKS)
+        .delete()
+        .eq("page_id", pageId)
+        .gte("chunk_index", chunks.length);
+      if (cleanupError) warnSaveFailedOnce("cleaning up old row chunks", cleanupError);
+      return true;
+    } catch (e) {
+      warnSaveFailedOnce("this page's data (a chunk of rows)", e);
+      return false;
     }
-    // Clean up any leftover chunks from a previous, larger version of this
-    // page's data (e.g. the sheet had more rows before) — otherwise stale
-    // rows from an old chunk index would silently tag along forever.
-    const { error: cleanupError } = await supabase
-      .from(PAGE_ROW_CHUNKS)
-      .delete()
-      .eq("page_id", pageId)
-      .gte("chunk_index", chunks.length);
-    if (cleanupError) warnSaveFailedOnce("cleaning up old row chunks", cleanupError);
-    return true;
-  } catch (e) {
-    warnSaveFailedOnce("this page's data (a chunk of rows)", e);
-    return false;
-  } finally {
-    selfWriteDepth--;
-  }
+  });
 }
 
 /** Saves a page's own config fields (small, always safe to write in one
@@ -359,29 +392,33 @@ export async function savePageRemote(
 
   const shouldIncludeRows = includeRows || page.sourceType === "manual";
 
-  try {
-    const { error } = await supabase.from(PAGES).upsert({
-      id: page.id,
-      team_id: teamId,
-      name: page.name,
-      source_type: page.sourceType ?? "manual",
-      sheet_url: page.sheetUrl || null,
-      sheet_tab_title: page.sheetTabTitle || null,
-      last_updated: page.lastUpdated,
-      columns: page.columns,
-      measures: page.measures,
-      calculated_columns: page.calculatedColumns,
-      active_filters: page.activeFilters,
-      widget_order: page.widgetOrder ?? [],
-    });
-    if (error) {
-      warnSaveFailedOnce("a page", error);
-      return; // don't bother writing rows if the page's own row failed
+  const pageWriteOk = await trackSelfWrite(async () => {
+    try {
+      const { error } = await supabase.from(PAGES).upsert({
+        id: page.id,
+        team_id: teamId,
+        name: page.name,
+        source_type: page.sourceType ?? "manual",
+        sheet_url: page.sheetUrl || null,
+        sheet_tab_title: page.sheetTabTitle || null,
+        last_updated: page.lastUpdated,
+        columns: page.columns,
+        measures: page.measures,
+        calculated_columns: page.calculatedColumns,
+        active_filters: page.activeFilters,
+        widget_order: page.widgetOrder ?? [],
+      });
+      if (error) {
+        warnSaveFailedOnce("a page", error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      warnSaveFailedOnce("a page", e);
+      return false;
     }
-  } catch (e) {
-    warnSaveFailedOnce("a page", e);
-    return;
-  }
+  });
+  if (!pageWriteOk) return; // don't bother writing rows if the page's own row failed
 
   if (shouldIncludeRows) await saveRowsRemote(page.id, page.rows, onRowSaveProgress);
 }
@@ -389,15 +426,17 @@ export async function savePageRemote(
 export async function deletePageRemote(id: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  try {
-    // Row chunks aren't cleaned up by an on-delete-cascade unless the SQL
-    // setup includes it — deleting them explicitly here works either way.
-    await supabase.from(PAGE_ROW_CHUNKS).delete().eq("page_id", id);
-    const { error } = await supabase.from(PAGES).delete().eq("id", id);
-    if (error) warnSaveFailedOnce("a page deletion", error);
-  } catch (e) {
-    warnSaveFailedOnce("a page deletion", e);
-  }
+  await trackSelfWrite(async () => {
+    try {
+      // Row chunks aren't cleaned up by an on-delete-cascade unless the SQL
+      // setup includes it — deleting them explicitly here works either way.
+      await supabase.from(PAGE_ROW_CHUNKS).delete().eq("page_id", id);
+      const { error } = await supabase.from(PAGES).delete().eq("id", id);
+      if (error) warnSaveFailedOnce("a page deletion", error);
+    } catch (e) {
+      warnSaveFailedOnce("a page deletion", e);
+    }
+  });
 }
 
 export async function saveWidgetRemote(
@@ -408,23 +447,27 @@ export async function saveWidgetRemote(
 ): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  try {
-    const { error } = await supabase.from(WIDGETS).upsert({ id, page_id: pageId, kind, config });
-    if (error) warnSaveFailedOnce("a widget", error);
-  } catch (e) {
-    warnSaveFailedOnce("a widget", e);
-  }
+  await trackSelfWrite(async () => {
+    try {
+      const { error } = await supabase.from(WIDGETS).upsert({ id, page_id: pageId, kind, config });
+      if (error) warnSaveFailedOnce("a widget", error);
+    } catch (e) {
+      warnSaveFailedOnce("a widget", e);
+    }
+  });
 }
 
 export async function deleteWidgetRemote(id: string): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
-  try {
-    const { error } = await supabase.from(WIDGETS).delete().eq("id", id);
-    if (error) warnSaveFailedOnce("a widget deletion", error);
-  } catch (e) {
-    warnSaveFailedOnce("a widget deletion", e);
-  }
+  await trackSelfWrite(async () => {
+    try {
+      const { error } = await supabase.from(WIDGETS).delete().eq("id", id);
+      if (error) warnSaveFailedOnce("a widget deletion", error);
+    } catch (e) {
+      warnSaveFailedOnce("a widget deletion", e);
+    }
+  });
 }
 
 /** Realtime, split into two independent, much narrower paths instead of one
@@ -456,7 +499,7 @@ export function subscribeToTeamsChanges(
 
   let metadataTimer: ReturnType<typeof setTimeout> | null = null;
   function reloadMetadata() {
-    if (selfWriteDepth > 0) return;
+    if (isLikelySelfEcho()) return;
     if (metadataTimer) clearTimeout(metadataTimer);
     metadataTimer = setTimeout(async () => {
       const metadata = await fetchTeamsPagesWidgets();
@@ -469,7 +512,7 @@ export function subscribeToTeamsChanges(
 
   const rowsTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function reloadPageRows(pageId: string) {
-    if (selfWriteDepth > 0) return;
+    if (isLikelySelfEcho()) return;
     const existing = rowsTimers.get(pageId);
     if (existing) clearTimeout(existing);
     rowsTimers.set(
