@@ -20,7 +20,7 @@ import { DataModelPanel } from "./components/DataModelPanel";
 import { fetchSheetAsRows } from "./lib/sheets";
 import {
   loadAllTeams, saveTeamRemote, deleteTeamRemote, savePageRemote, deletePageRemote,
-  saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges,
+  saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges, loadPageRows,
 } from "./lib/remoteDb";
 import { savePersistedState } from "./lib/persistence";
 import {
@@ -283,6 +283,48 @@ function DashboardApp() {
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
 
+  // Rows are no longer eagerly loaded for every page at startup (see
+  // remoteDb.ts's loadAllTeams doc comment) — each page's rows are fetched
+  // lazily, right when it's actually the one being viewed. pageRowsAttemptedRef
+  // tracks which pages we've already tried this for, so switching back to an
+  // already-visited page doesn't keep re-fetching it, and so a genuinely
+  // empty page (0 rows in Supabase) isn't confused with "haven't tried yet."
+  const pageRowsAttemptedRef = useRef<Set<string>>(new Set());
+  // Bumped after each lazy-load attempt finishes, purely to re-trigger the
+  // auto-load-from-Google-Sheet effect below once we know whether Supabase
+  // actually had this page's data or not.
+  const [rowsLoadTick, setRowsLoadTick] = useState(0);
+
+  useEffect(() => {
+    const pageId = activePage.id;
+    if (pageRowsAttemptedRef.current.has(pageId)) return;
+    if (pendingRowSaveRef.current?.page.id === pageId) {
+      // There's already a fresher, not-yet-saved version of this exact page
+      // sitting in memory than whatever Supabase has — don't overwrite it.
+      pageRowsAttemptedRef.current.add(pageId);
+      return;
+    }
+    pageRowsAttemptedRef.current.add(pageId);
+    let cancelled = false;
+    (async () => {
+      const rows = await loadPageRows(pageId);
+      if (cancelled) return;
+      if (rows === null) {
+        pageRowsAttemptedRef.current.delete(pageId); // failed — allow a retry (e.g. if you switch away and back)
+        return;
+      }
+      if (rows.length > 0) {
+        setDepartments((prev) =>
+          prev.map((d) => ({ ...d, pages: d.pages.map((p) => (p.id === pageId ? { ...p, rows } : p)) }))
+        );
+      }
+      setRowsLoadTick((t) => t + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage.id]);
+
   const autoLoadAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -294,6 +336,10 @@ function DashboardApp() {
       canManageDataSources(user?.role) &&
       activePage.sheetUrl &&
       activePage.rows.length === 0 &&
+      // Wait for the lazy Supabase read above to actually finish first —
+      // otherwise this would re-fetch live from Google every single time,
+      // even when the data was already sitting in Supabase the whole time.
+      pageRowsAttemptedRef.current.has(activePage.id) &&
       !refreshing &&
       !autoLoadAttemptedRef.current.has(activePage.id)
     ) {
@@ -301,7 +347,7 @@ function DashboardApp() {
       loadSheet(activePage.sheetUrl, activePage.sheetTabTitle, /* silent */ true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage.id, activePage.sheetUrl, activePage.rows.length, user?.role]);
+  }, [activePage.id, activePage.sheetUrl, activePage.rows.length, user?.role, rowsLoadTick]);
 
   // Global, clock-aligned sync instead of continuous per-edit updates: once
   // an hour (on the hour), re-fetch every sheet-connected page across every

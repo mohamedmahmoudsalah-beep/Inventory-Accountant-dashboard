@@ -132,34 +132,6 @@ function pageRowToTaskPage(row: PageRow, widgets: WidgetRow[], rows: DataRow[]):
   };
 }
 
-/** Reads every row of page_row_chunks, in bounded pages rather than one
- *  single query. A single unbounded select here was the actual cause of the
- *  "canceling statement due to statement timeout" errors on a large
- *  dataset — Postgres was choking on one giant read, especially while a lot
- *  of writes were happening at the same time. Reading in modest pages keeps
- *  each individual query fast and light, regardless of total sheet size. */
-async function loadAllRowChunks(
-  supabase: ReturnType<typeof getSupabase>
-): Promise<{ data: PageRowChunkRow[] | null; error: unknown }> {
-  const PAGE_SIZE = 100; // each chunk row can be up to ~500KB (MAX_CHUNK_BYTES), so keep this modest — 500 of them in one response would defeat the point of paginating at all.
-  const all: PageRowChunkRow[] = [];
-  let offset = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { data, error } = await supabase!
-      .from(PAGE_ROW_CHUNKS)
-      .select("page_id, chunk_index, data")
-      .order("page_id", { ascending: true })
-      .order("chunk_index", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) return { data: null, error };
-    all.push(...((data ?? []) as PageRowChunkRow[]));
-    if (!data || data.length < PAGE_SIZE) break; // last page
-    offset += PAGE_SIZE;
-  }
-  return { data: all, error: null };
-}
-
 /** Fetches teams/pages/widgets only — no row data. Used both for the one
  *  true full load at startup and for every metadata-only realtime reload
  *  (a rename, a filter change, a widget edit, ...), which never needs to
@@ -211,10 +183,11 @@ function buildDepartments(
   return teams.map((t) => ({ id: t.id, name: t.name, pages: pagesByTeam.get(t.id) ?? [] }));
 }
 
-/** Fetches just one page's rows, in bounded pages. Used when a realtime
- *  event says only that one page's chunks changed — there's no reason to
- *  re-read anyone else's data just because one page's sheet was refreshed. */
-async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
+/** Fetches just one page's rows, in bounded pages. Used both when the app
+ *  first shows a page (lazy load — see App.tsx) and when a realtime event
+ *  says only that one page's chunks changed — there's no reason to ever
+ *  read anyone else's data just because one page's sheet was refreshed. */
+export async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
   const PAGE_SIZE = 100;
@@ -253,35 +226,32 @@ export type LoadTeamsResult =
   | { status: "error"; localFallback: Department[] | null };
 
 /** Loads every team/page/widget and reconstructs the same Department[] tree
- *  shape the rest of the app already works with. Only used for the one true
- *  full load at startup — after that, subscribeToTeamsChanges below handles
- *  metadata and row updates separately and much more surgically. */
+ *  shape the rest of the app already works with — but with every page's
+ *  `rows` starting empty. Only used for the one true full load at startup.
+ *
+ *  This used to also eagerly fetch every row of every page across every
+ *  team in one go. That was the real cause of the app timing out on load
+ *  once there were enough teams/pages/data: the very first thing it did was
+ *  try to read far more than it actually needed right away (rows for pages
+ *  nobody was even looking at yet). Now the initial load is just metadata
+ *  (small, fast), and the caller is expected to call loadPageRows for
+ *  whichever one page is actually being viewed — see App.tsx, which does
+ *  this for the active page on mount and again whenever you switch pages. */
 export async function loadAllTeams(): Promise<LoadTeamsResult> {
   const supabase = getSupabase();
   if (!supabase) return { status: "error", localFallback: loadPersistedState()?.departments ?? null };
 
-  const [metadata, rowChunksRes] = await Promise.all([fetchTeamsPagesWidgets(), loadAllRowChunks(supabase)]);
-
-  if (!metadata || rowChunksRes.error) {
-    console.error("Supabase: failed to load teams/pages/widgets.", rowChunksRes.error);
-    return { status: "error", localFallback: loadPersistedState()?.departments ?? null };
-  }
+  const metadata = await fetchTeamsPagesWidgets();
+  if (!metadata) return { status: "error", localFallback: loadPersistedState()?.departments ?? null };
 
   const { teams, pages, widgets } = metadata;
-  const rowChunks = (rowChunksRes.data ?? []) as PageRowChunkRow[];
   if (teams.length === 0) return { status: "empty" };
 
-  // Chunks already arrive ordered by page_id then chunk_index (the query
-  // above), so concatenating them in the order received reconstructs the
-  // original row order correctly.
-  const rowsByPage = new Map<string, DataRow[]>();
-  rowChunks.forEach((c) => {
-    if (!rowsByPage.has(c.page_id)) rowsByPage.set(c.page_id, []);
-    rowsByPage.get(c.page_id)!.push(...(c.data ?? []));
-  });
-
-  const departments = buildDepartments(teams, pages, widgets, rowsByPage);
-  // Mirror locally too, as an offline fallback.
+  const departments = buildDepartments(teams, pages, widgets, new Map());
+  // Mirror locally too, as an offline fallback. Note: this intentionally
+  // only ever caches whatever rows are already in memory for each page at
+  // the time this runs elsewhere (App.tsx re-saves the fuller picture as
+  // pages get lazily loaded) — this specific call just seeds structure.
   savePersistedState({ departments, activeDeptId: departments[0]?.id ?? "", activePageId: departments[0]?.pages[0]?.id ?? "" });
   return { status: "ok", departments };
 }
