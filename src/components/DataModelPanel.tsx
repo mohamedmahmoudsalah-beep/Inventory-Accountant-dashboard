@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, Sparkles } from "lucide-react";
 import type { CalculatedColumn, Measure, PivotAgg } from "../types";
 
 interface Props {
@@ -11,12 +11,107 @@ interface Props {
   onClose: () => void;
 }
 
-const AGGS: PivotAgg[] = ["sum", "avg", "count", "max", "min"];
+const AGGS: PivotAgg[] = ["sum", "avg", "count", "distinct", "max", "min"];
+
+interface Recipe {
+  title: string;
+  problem: string; // plain-language: "when you'd reach for this"
+  howItWorks: string; // plain-language: what it actually does
+  kind: "measure" | "column";
+  create: (columns: string[]) => Measure | CalculatedColumn;
+}
+
+const RECIPES: Recipe[] = [
+  {
+    title: "Count how many separate times something happened",
+    problem:
+      'Example: a person visited a branch 3 times this month, and each visit has several product rows — a Pivot naturally shows all 160 products they touched, but "count" on those rows gives you 160, not 3, because every product is its own row. You want the number of separate visits, not the number of rows.',
+    howItWorks:
+      'Use "distinct" instead of "count" on whichever column uniquely identifies one visit (a visit ID, or a date/time column if each visit has its own timestamp). "distinct" counts how many different values that column has — repeats collapse into one, so 160 product rows from 3 visits correctly comes out as 3.',
+    kind: "measure",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "Visit count",
+      column: columns[0],
+      agg: "distinct",
+    }),
+  },
+  {
+    title: "Total only where a condition is true (like Excel's SUMIF)",
+    problem: 'Example: total revenue, but only for orders from Cairo — not every order in the sheet.',
+    howItWorks:
+      'A Measure with "where" set: pick sum on the revenue column, then set "where region = Cairo". Every other row is ignored for this one number.',
+    kind: "measure",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "Filtered total",
+      column: columns[0],
+      agg: "sum",
+      conditionColumn: columns[1] ?? columns[0],
+      conditionValue: "",
+    }),
+  },
+  {
+    title: "How many different categories appear (not how many rows)",
+    problem: "Example: how many different branches show up in this data at all — not how many rows/orders there are.",
+    howItWorks: '"distinct" on the branch/category column itself — same idea as the visit-count recipe above, just applied to a category instead of a visit ID.',
+    kind: "measure",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "Distinct count",
+      column: columns[0],
+      agg: "distinct",
+    }),
+  },
+  {
+    title: "Difference between two columns",
+    problem: "Example: cost minus revenue, as its own column you can chart or filter on.",
+    howItWorks: "A Calculated column with a simple subtraction formula, referencing both column names.",
+    kind: "column",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "Difference",
+      formula: columns.length > 1 ? `[${columns[0]}] - [${columns[1]}]` : `[${columns[0]}]`,
+    }),
+  },
+  {
+    title: "A value that depends on a condition (like Excel's IF)",
+    problem: 'Example: add 10% to revenue, but only for Cairo orders — everything else stays as-is.',
+    howItWorks: 'A Calculated column using IF(condition, valueIfTrue, valueIfFalse) — condition can use ==, >, < against a column.',
+    kind: "column",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "Adjusted value",
+      formula: `IF(${columns[1] ?? columns[0]} == "value", ${columns[0]} * 1.1, ${columns[0]})`,
+    }),
+  },
+  {
+    title: "Percentage of a total",
+    problem: "Example: what % of total cost does this row's cost represent.",
+    howItWorks: "A Calculated column dividing the row's value by a fixed total, times 100. (For a % of a filtered/grouped total instead, that needs a Measure as the denominator — ask the AI assistant for the exact formula for your specific case.)",
+    kind: "column",
+    create: (columns) => ({
+      id: crypto.randomUUID(),
+      name: "% of total",
+      formula: `${columns[0]} / 1000 * 100`,
+    }),
+  },
+];
 
 export function DataModelPanel({
   columns, measures, calculatedColumns, onChangeMeasures, onChangeCalculatedColumns, onClose,
 }: Props) {
-  const [tab, setTab] = useState<"measures" | "columns">("measures");
+  const [tab, setTab] = useState<"recipes" | "measures" | "columns">("recipes");
+
+  function applyRecipe(recipe: Recipe) {
+    if (recipe.kind === "measure") {
+      onChangeMeasures([...measures, recipe.create(columns) as Measure]);
+      setTab("measures");
+    } else {
+      onChangeCalculatedColumns([...calculatedColumns, recipe.create(columns) as CalculatedColumn]);
+      setTab("columns");
+    }
+  }
 
   function addMeasure() {
     const m: Measure = { id: crypto.randomUUID(), name: "New measure", column: columns[0], agg: "sum" };
@@ -49,11 +144,38 @@ export function DataModelPanel({
         </div>
 
         <div className="flex gap-1 mb-4 bg-[var(--panel-raised)] p-1 rounded-lg text-xs">
+          <button onClick={() => setTab("recipes")} className={`flex-1 py-1.5 rounded-md flex items-center justify-center gap-1 ${tab === "recipes" ? "bg-[var(--accent-dim)] border border-[var(--accent-border)] text-[var(--text-h)]" : "text-[var(--text-dim)]"}`}>
+            <Sparkles size={12} /> Recipes
+          </button>
           <button onClick={() => setTab("measures")} className={`flex-1 py-1.5 rounded-md ${tab === "measures" ? "bg-[var(--accent-dim)] border border-[var(--accent-border)] text-[var(--text-h)]" : "text-[var(--text-dim)]"}`}>Measures</button>
           <button onClick={() => setTab("columns")} className={`flex-1 py-1.5 rounded-md ${tab === "columns" ? "bg-[var(--accent-dim)] border border-[var(--accent-border)] text-[var(--text-h)]" : "text-[var(--text-dim)]"}`}>Calculated columns</button>
         </div>
 
-        {tab === "measures" ? (
+        {tab === "recipes" ? (
+          <div>
+            <p className="text-xs text-[var(--text-dim)] mb-3">
+              Not sure which tool to reach for? Find the situation closest to what you're trying to do below — each one explains it in plain language and can set up a starting point for you to adjust.
+            </p>
+            <div className="space-y-2">
+              {RECIPES.map((r) => (
+                <div key={r.title} className="p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)]">
+                  <p className="text-sm text-[var(--text-h)] mb-1">{r.title}</p>
+                  <p className="text-xs text-[var(--text-dim)] mb-1.5">{r.problem}</p>
+                  <p className="text-xs text-[var(--text-dim)] mb-2"><span className="text-[var(--text)]">How it works:</span> {r.howItWorks}</p>
+                  <button
+                    onClick={() => applyRecipe(r)}
+                    className="flex items-center gap-1 text-xs text-[var(--accent)] hover:opacity-80"
+                  >
+                    <Plus size={13} /> Set this up (as a {r.kind === "measure" ? "measure" : "calculated column"} you can then adjust)
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--text-dim)] mt-3">
+              Something more specific than these? Describe exactly what you want in plain language to the AI assistant (e.g. "count how many different months each branch had at least one order") and ask it which of Measures/Calculated columns to use and the exact settings.
+            </p>
+          </div>
+        ) : tab === "measures" ? (
           <div>
             <p className="text-xs text-[var(--text-dim)] mb-3">
               A measure is a saved aggregation you can reuse as a value in any Pivot, Matrix, or Card widget — e.g. "Cairo Revenue = sum(revenue) where region = Cairo".

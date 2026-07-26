@@ -32,7 +32,7 @@ export function canUseFilters(role?: Role): boolean {
 
 /** Export to Excel. */
 export function canExport(role?: Role): boolean {
-  return role === "admin";
+  return role === "admin" || role === "manager" || role === "employee";
 }
 
 /** Use the AI assistant. */
@@ -49,7 +49,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   admin: "Everything: manage users, teams/pages, data sources, exports, and widgets.",
-  manager: "Refresh already-connected data and edit charts/pivots — can't connect new sources, export, or manage users/teams.",
-  employee: "View dashboards, use filters, and use the AI assistant. Can't edit widgets, export, or connect data.",
+  manager: "Refresh already-connected data, edit charts/pivots, and export — can't connect new sources or manage users/teams.",
+  employee: "View dashboards, use filters, export chart/pivot data, and use the AI assistant. Can't edit widgets or connect data.",
   viewer: "Read-only: can view dashboards exactly as configured.",
 };

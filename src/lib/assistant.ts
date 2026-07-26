@@ -31,7 +31,14 @@ export async function askAssistant(question: string, context: AskContext): Promi
   });
 
   if (!res.ok) {
-    throw new Error(`Assistant backend returned ${res.status}`);
+    let reason = `status ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.error) reason = errBody.error;
+    } catch {
+      // response wasn't JSON — keep the status-code fallback above
+    }
+    throw new Error(reason);
   }
 
   const data = await res.json();

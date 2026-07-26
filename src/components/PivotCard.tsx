@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Download, Trash2, Settings2, Plus, X, ArrowUpDown } from "lucide-react";
-import type { DataRow, Measure, PivotConfig, PivotValueMetric } from "../types";
+import type { DataRow, FilterConfig, Measure, PivotConfig, PivotValueMetric } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
 
@@ -13,6 +13,10 @@ interface Props {
   canExport?: boolean;
   onChange: (config: PivotConfig) => void;
   onRemove: () => void;
+  /** Click a row's group-by cell to filter every other widget on the page
+   *  by that value — the same cross-filtering Chart already has. */
+  onCrossFilter?: (column: string, value: string) => void;
+  activeFilters?: FilterConfig[];
 }
 
 function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measure[]): number {
@@ -25,7 +29,7 @@ function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measur
   return aggregateColumn(rows, measure.column, measure.agg, measure.conditionColumn, measure.conditionValue);
 }
 
-export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove }: Props) {
+export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
   const [showEditor, setShowEditor] = useState(false);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -216,7 +220,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
                   >
                     <optgroup label="Columns">
                       {columns.flatMap((col) =>
-                        (["sum", "avg", "count", "max", "min"] as const).map((agg) => (
+                        (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
                           <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
                         ))
                       )}
@@ -265,7 +269,23 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
           <tbody>
             {result.map((r, i) => (
               <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
-                {r.keys.map((k, j) => <td key={j} className="px-2 py-1.5 text-[var(--text)]">{k}</td>)}
+                {r.keys.map((k, j) => {
+                  const isActive = activeFilters.some(
+                    (f) => f.column === groupCols[j] && (f.mode ?? "equals") === "equals" && f.value === k
+                  );
+                  return (
+                    <td
+                      key={j}
+                      onClick={() => onCrossFilter?.(groupCols[j], k)}
+                      title={onCrossFilter ? `Click to filter by ${groupCols[j]} = ${k}` : undefined}
+                      className={`px-2 py-1.5 ${
+                        isActive ? "text-[var(--accent)] font-medium" : "text-[var(--text)]"
+                      } ${onCrossFilter ? "cursor-pointer hover:underline" : ""}`}
+                    >
+                      {k}
+                    </td>
+                  );
+                })}
                 {r.metrics.map((m, j) => (
                   <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
                     {m.toLocaleString(undefined, { maximumFractionDigits: 2 })}

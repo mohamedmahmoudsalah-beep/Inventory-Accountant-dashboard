@@ -35,9 +35,13 @@ export function AIAssistant({ departmentName, rows, columns, onClose }: Props) {
       const answer = await askAssistant(question, { departmentName, rows, columns });
       setMessages((m) => [...m, { role: "assistant", content: answer }]);
     } catch (e) {
+      const reason = e instanceof Error ? e.message : "unknown error";
       setMessages((m) => [
         ...m,
-        { role: "assistant", content: "I couldn't reach the assistant backend. See README.md to set up the API proxy." },
+        {
+          role: "assistant",
+          content: `I couldn't reach the assistant backend (${reason}). If you haven't set it up yet, see README.md "Wiring up the AI assistant".`,
+        },
       ]);
     } finally {
       setLoading(false);

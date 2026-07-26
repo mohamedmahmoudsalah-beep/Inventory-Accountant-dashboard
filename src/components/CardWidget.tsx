@@ -48,14 +48,14 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
             if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
             else {
               const [, col, agg] = val.split(":");
-              onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "max" | "min" } });
+              onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
             }
           }}
           className="mb-3 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-xs text-[var(--text)]"
         >
           <optgroup label="Columns">
             {columns.flatMap((col) =>
-              (["sum", "avg", "count", "max", "min"] as const).map((agg) => (
+              (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
                 <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
               ))
             )}

@@ -922,6 +922,8 @@ function DashboardApp() {
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
                             onChange={updatePivot} onRemove={() => removePivot(w.item.id)}
+                            onCrossFilter={canFilter ? handleCrossFilter : undefined}
+                            activeFilters={activePage.activeFilters}
                           />
                         </WidgetShell>
                       );
@@ -936,6 +938,8 @@ function DashboardApp() {
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
                             onChange={updateMatrix} onRemove={() => removeMatrix(w.item.id)}
+                            onCrossFilter={canFilter ? handleCrossFilter : undefined}
+                            activeFilters={activePage.activeFilters}
                           />
                         </WidgetShell>
                       );

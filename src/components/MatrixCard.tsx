@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Download, Trash2, Settings2 } from "lucide-react";
-import type { DataRow, Measure, MatrixConfig } from "../types";
+import type { DataRow, FilterConfig, Measure, MatrixConfig } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
 
@@ -13,6 +13,10 @@ interface Props {
   canExport?: boolean;
   onChange: (config: MatrixConfig) => void;
   onRemove: () => void;
+  /** Click a row or column label to filter every other widget on the page
+   *  by that value — the same cross-filtering Chart already has. */
+  onCrossFilter?: (column: string, value: string) => void;
+  activeFilters?: FilterConfig[];
 }
 
 function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): number {
@@ -25,7 +29,7 @@ function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): 
   return aggregateColumn(rows, measure.column, measure.agg, measure.conditionColumn, measure.conditionValue);
 }
 
-export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove }: Props) {
+export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
   // Starts open for a brand-new matrix (no columns picked yet), same as Chart.
   const [showEditor, setShowEditor] = useState(
     !config.rowCol || !config.colCol || (config.value.kind === "column" && !config.value.column)
@@ -116,7 +120,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
               if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
               else {
                 const [, col, agg] = val.split(":");
-                onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "max" | "min" } });
+                onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
               }
             }}
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
@@ -124,7 +128,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
             <option value="column::sum" disabled>value…</option>
             <optgroup label="Columns">
               {columns.flatMap((col) =>
-                (["sum", "avg", "count", "max", "min"] as const).map((agg) => (
+                (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
                   <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
                 ))
               )}
@@ -150,22 +154,49 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
               <th className="text-left px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)] sticky left-0 bg-[var(--panel)]">
                 {config.rowCol} \ {config.colCol}
               </th>
-              {colKeys.map((ck) => (
-                <th key={ck} className="text-right px-2 py-1.5 text-xs uppercase tracking-wide text-[var(--text-dim)] whitespace-nowrap">{ck}</th>
-              ))}
+              {colKeys.map((ck) => {
+                const isActive = activeFilters.some(
+                  (f) => f.column === config.colCol && (f.mode ?? "equals") === "equals" && f.value === ck
+                );
+                return (
+                  <th
+                    key={ck}
+                    onClick={() => onCrossFilter?.(config.colCol, ck)}
+                    title={onCrossFilter ? `Click to filter by ${config.colCol} = ${ck}` : undefined}
+                    className={`text-right px-2 py-1.5 text-xs uppercase tracking-wide whitespace-nowrap ${
+                      isActive ? "text-[var(--accent)]" : "text-[var(--text-dim)]"
+                    } ${onCrossFilter ? "cursor-pointer hover:underline" : ""}`}
+                  >
+                    {ck}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {rowKeys.map((rk, i) => (
-              <tr key={rk} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
-                <td className="px-2 py-1.5 text-[var(--text)] sticky left-0 bg-[var(--panel)] font-medium">{rk}</td>
-                {grid[i].map((v, j) => (
-                  <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
-                    {v.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            {rowKeys.map((rk, i) => {
+              const isRowActive = activeFilters.some(
+                (f) => f.column === config.rowCol && (f.mode ?? "equals") === "equals" && f.value === rk
+              );
+              return (
+                <tr key={rk} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
+                  <td
+                    onClick={() => onCrossFilter?.(config.rowCol, rk)}
+                    title={onCrossFilter ? `Click to filter by ${config.rowCol} = ${rk}` : undefined}
+                    className={`px-2 py-1.5 sticky left-0 bg-[var(--panel)] font-medium ${
+                      isRowActive ? "text-[var(--accent)]" : "text-[var(--text)]"
+                    } ${onCrossFilter ? "cursor-pointer hover:underline" : ""}`}
+                  >
+                    {rk}
                   </td>
-                ))}
-              </tr>
-            ))}
+                  {grid[i].map((v, j) => (
+                    <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
+                      {v.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

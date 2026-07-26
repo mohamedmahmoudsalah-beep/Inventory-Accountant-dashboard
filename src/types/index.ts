@@ -40,7 +40,7 @@ export interface DataRow {
   [column: string]: string | number;
 }
 
-export type PivotAgg = "sum" | "avg" | "count" | "max" | "min";
+export type PivotAgg = "sum" | "avg" | "count" | "max" | "min" | "distinct";
 
 /** A value can come straight from a column+aggregation, or reuse a saved Measure. */
 export type ValueSource =
