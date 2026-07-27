@@ -7,9 +7,15 @@ export interface AllowedUser {
 
 export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar" | "treemap";
 
+/** Position and size on the free-form drag grid, in grid units (not
+ *  pixels) — x/y is the top-left cell, w/h is how many columns/rows it
+ *  spans. See App.tsx's grid setup (12 columns) for how these translate to
+ *  actual pixels on screen. */
 export interface WidgetLayout {
-  width: number;
-  height: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface ChartConfig {

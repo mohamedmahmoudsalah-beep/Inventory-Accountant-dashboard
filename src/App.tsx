@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
+import GridLayout, { WidthProvider, type Layout, type LayoutItem } from "react-grid-layout/legacy";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginScreen } from "./components/LoginScreen";
 import { Sidebar } from "./components/Sidebar";
@@ -17,6 +18,7 @@ import { NamePromptModal } from "./components/NamePromptModal";
 import { DataSourcesView } from "./components/DataSourcesView";
 import { UserManagement } from "./components/UserManagement";
 import { DataModelPanel } from "./components/DataModelPanel";
+import { GRID_COLS, GRID_ROW_HEIGHT, GRID_MARGIN, DEFAULT_GRID_SIZE, MIN_GRID_SIZE, hasGridLayout } from "./lib/gridLayout";
 import { fetchSheetAsRows } from "./lib/sheets";
 import {
   loadAllTeams, saveTeamRemote, deleteTeamRemote, savePageRemote, deletePageRemote,
@@ -81,6 +83,11 @@ function passesFilter(row: DataRow, f: FilterConfig): boolean {
   }
   return f.value === "All" || String(row[f.column]) === f.value;
 }
+
+// Created once at module scope — WidthProvider returns a new component type
+// each call, so this must never be recreated on every render (that would
+// remount the whole grid on every single render).
+const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 function DashboardApp() {
   const { user } = useAuth();
@@ -710,17 +717,46 @@ function DashboardApp() {
     .map((id) => widgetLookup.get(id))
     .filter((w): w is WidgetRef => Boolean(w));
 
-  function reorderWidgets(draggedId: string, targetId: string) {
-    const order = getWidgetOrder(activePage);
-    const from = order.indexOf(draggedId);
-    const to = order.indexOf(targetId);
-    if (from === -1 || to === -1) return;
-    const next = [...order];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    updatePage({ widgetOrder: next });
-    const pageId = activePage.id, deptId = activeDept.id;
-    debouncedSync(`page:${pageId}`, () => syncPage({ ...activePage, widgetOrder: next }, deptId));
+  // Builds the grid's layout array from each widget's saved position, or a
+  // sensible per-kind default (placed at the bottom, y: Infinity lets the
+  // grid auto-place it there) for a widget that's never been positioned —
+  // e.g. one just added, or one saved before this drag-grid existed.
+  const gridLayout: LayoutItem[] = orderedWidgets.map((w) => {
+    const min = MIN_GRID_SIZE[w.kind];
+    if (hasGridLayout(w.item.layout)) {
+      return { i: w.item.id, x: w.item.layout.x, y: w.item.layout.y, w: w.item.layout.w, h: w.item.layout.h, ...min };
+    }
+    const def = DEFAULT_GRID_SIZE[w.kind];
+    return { i: w.item.id, x: 0, y: Infinity, w: def.w, h: def.h, ...min };
+  });
+
+  function updateWidgetById(id: string, patch: (w: WidgetRef) => void) {
+    const w = widgetLookup.get(id);
+    if (!w) return;
+    patch(w);
+  }
+
+  function handleGridLayoutChange(newLayout: Layout) {
+    newLayout.forEach((entry) => {
+      const w = widgetLookup.get(entry.i);
+      if (!w) return;
+      const current = w.item.layout;
+      // Skip widgets whose position genuinely hasn't changed — every drag/
+      // resize fires this for the *whole* grid, not just the item that
+      // actually moved, so without this every other on-screen widget would
+      // get needlessly re-saved too.
+      if (current && current.x === entry.x && current.y === entry.y && current.w === entry.w && current.h === entry.h) {
+        return;
+      }
+      const layout = { x: entry.x, y: entry.y, w: entry.w, h: entry.h };
+      updateWidgetById(entry.i, (ref) => {
+        if (ref.kind === "chart") updateChart({ ...ref.item, layout });
+        else if (ref.kind === "pivot") updatePivot({ ...ref.item, layout });
+        else if (ref.kind === "matrix") updateMatrix({ ...ref.item, layout });
+        else if (ref.kind === "card") updateCard({ ...ref.item, layout });
+        else updateText({ ...ref.item, layout });
+      });
+    });
   }
 
   // --- Team/page structure: add, rename, delete ---
@@ -895,14 +931,25 @@ function DashboardApp() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-4 items-start">
+                <>
+                <ResponsiveGridLayout
+                  className="layout"
+                  layout={gridLayout}
+                  cols={GRID_COLS}
+                  rowHeight={GRID_ROW_HEIGHT}
+                  margin={GRID_MARGIN}
+                  containerPadding={[0, 0]}
+                  isDraggable={canEdit}
+                  isResizable={canEdit}
+                  draggableHandle=".widget-drag-handle"
+                  compactType="vertical"
+                  preventCollision={false}
+                  onLayoutChange={canEdit ? handleGridLayoutChange : undefined}
+                >
                   {orderedWidgets.map((w) => {
                     if (w.kind === "chart") {
                       return (
-                        <WidgetShell
-                          key={w.item.id} id={w.item.id} kind="chart" canEdit={canEdit} onReorder={reorderWidgets}
-                          layout={w.item.layout} onResize={(size) => updateChart({ ...w.item, layout: size })}
-                        >
+                        <WidgetShell key={w.item.id} canEdit={canEdit}>
                           <ChartCard
                             config={w.item} rows={filteredRows} columns={effective.columns}
                             canEdit={canEdit} canExport={canExportData}
@@ -914,10 +961,7 @@ function DashboardApp() {
                     }
                     if (w.kind === "pivot") {
                       return (
-                        <WidgetShell
-                          key={w.item.id} id={w.item.id} kind="pivot" canEdit={canEdit} onReorder={reorderWidgets}
-                          layout={w.item.layout} onResize={(size) => updatePivot({ ...w.item, layout: size })}
-                        >
+                        <WidgetShell key={w.item.id} canEdit={canEdit}>
                           <PivotCard
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
@@ -930,10 +974,7 @@ function DashboardApp() {
                     }
                     if (w.kind === "matrix") {
                       return (
-                        <WidgetShell
-                          key={w.item.id} id={w.item.id} kind="matrix" canEdit={canEdit} onReorder={reorderWidgets}
-                          layout={w.item.layout} onResize={(size) => updateMatrix({ ...w.item, layout: size })}
-                        >
+                        <WidgetShell key={w.item.id} canEdit={canEdit}>
                           <MatrixCard
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit} canExport={canExportData}
@@ -946,10 +987,7 @@ function DashboardApp() {
                     }
                     if (w.kind === "card") {
                       return (
-                        <WidgetShell
-                          key={w.item.id} id={w.item.id} kind="card" canEdit={canEdit} onReorder={reorderWidgets}
-                          layout={w.item.layout} onResize={(size) => updateCard({ ...w.item, layout: size })}
-                        >
+                        <WidgetShell key={w.item.id} canEdit={canEdit}>
                           <CardWidget
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit}
@@ -959,34 +997,32 @@ function DashboardApp() {
                       );
                     }
                     return (
-                      <WidgetShell
-                        key={w.item.id} id={w.item.id} kind="text" canEdit={canEdit} onReorder={reorderWidgets}
-                        layout={w.item.layout} onResize={(size) => updateText({ ...w.item, layout: size })}
-                      >
+                      <WidgetShell key={w.item.id} canEdit={canEdit}>
                         <TextWidget config={w.item} canEdit={canEdit} onChange={updateText} onRemove={() => removeText(w.item.id)} />
                       </WidgetShell>
                     );
                   })}
-                  {canEdit && (
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={addChart} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
-                        <Plus size={15} /> Chart
-                      </button>
-                      <button onClick={addPivot} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
-                        <Plus size={15} /> Pivot table
-                      </button>
-                      <button onClick={addMatrix} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
-                        <Plus size={15} /> Matrix
-                      </button>
-                      <button onClick={addCard} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
-                        <Plus size={15} /> Card
-                      </button>
-                      <button onClick={addText} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-40 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
-                        <Plus size={15} /> Text/Image
-                      </button>
-                    </div>
-                  )}
-                </div>
+                </ResponsiveGridLayout>
+                {canEdit && (
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    <button onClick={addChart} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-16 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                      <Plus size={15} /> Chart
+                    </button>
+                    <button onClick={addPivot} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-16 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                      <Plus size={15} /> Pivot table
+                    </button>
+                    <button onClick={addMatrix} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-16 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                      <Plus size={15} /> Matrix
+                    </button>
+                    <button onClick={addCard} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-16 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                      <Plus size={15} /> Card
+                    </button>
+                    <button onClick={addText} className="flex-1 min-w-[120px] flex items-center justify-center gap-1.5 min-h-16 rounded-xl border border-dashed border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent-border)] hover:text-[var(--text)] text-sm">
+                      <Plus size={15} /> Text/Image
+                    </button>
+                  </div>
+                )}
+                </>
               )}
 
               {effective.columns.length > 0 && (
