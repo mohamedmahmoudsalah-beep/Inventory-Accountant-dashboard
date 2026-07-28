@@ -43,9 +43,9 @@ Every previous save wrote the *entire* dashboard (all teams, all pages, all widg
 **Fixed excessive Supabase usage (Disk IO exhaustion warning):**
 The app used to push a full save to the shared database on almost every small edit (typing a chart title, moving a filter, resizing a widget's parent, etc.), which could exhaust a free-tier Supabase project's daily Disk IO budget and cause intermittent failures that looked like CORS errors. This is now much lighter:
 - Small edits are saved **locally only** (instant, free) so your own browser never loses your work.
-- The shared database is only written to: **once an hour** (a background sync, admin-only), or immediately after a **deliberate** action — connecting/refreshing a sheet, importing a file, or adding/renaming/deleting a team or page.
-- **Only the Admin account now connects new data sources, imports files, and exports to Excel.** Managers can still refresh an already-connected source and edit charts/pivots; Employees and Viewers are read-only for data connections either way. This was a deliberate simplification to reduce how many sessions could trigger shared-database writes at once.
-- Sheet data fetched by the admin is shared with everyone automatically (no one else needs their own Drive access) — but only refreshes on the hourly sync or when the admin manually clicks refresh, not continuously.
+- The shared database is only written to: **once a day, at 3 AM** (a background sync, Admin-only, only runs while the Admin's browser tab happens to be open at that time), or immediately after a **deliberate** action — connecting/refreshing a sheet, importing a file, or adding/renaming/deleting a team or page.
+- **Only the Admin account connects, imports, or refreshes any data source.** Managers can add/rename/remove teams & pages and edit charts/pivots/matrices/cards, but have no way to connect, import, or refresh data anymore — that's Admin-only. Employees and Viewers are read-only for data connections either way. This was a deliberate simplification so one account is the single source of truth for what data is loaded.
+- Sheet data fetched by the admin is shared with everyone automatically (no one else needs their own Drive access) — but only refreshes on the daily 3 AM sync or when the admin manually clicks refresh, not continuously.
 - Fixed imported/combined offline Excel data disappearing after a refresh — it's now saved immediately since (unlike a live sheet link) there's nowhere to re-fetch it from later.
 - Fixed repeated "couldn't load sheet" popups hammering the page for non-admin accounts — automatic background attempts now fail silently and only try once, instead of retrying and alerting endlessly.
 - Fixed manually resizing a chart/pivot silently reverting to the default size after any unrelated edit elsewhere on the page.
@@ -100,8 +100,8 @@ Four roles now exist instead of just admin/viewer:
 
 | Role | Can do |
 |---|---|
-| **Admin** | Everything — manage users, add/remove teams & pages, connect data sources, edit widgets |
-| **Manager** | Connect/import/combine data sources, edit charts & pivots — can't manage users or add/remove teams/pages |
+| **Admin** | Everything — manage users, add/remove teams & pages, connect/refresh data sources, edit widgets |
+| **Manager** | Add/rename/remove teams & pages, edit charts/pivots/matrices/cards, export — can't connect or refresh any data source (that's Admin-only now) and can't manage users |
 | **Employee** | View dashboards, use filters, export to Excel, use the AI assistant — can't edit widgets or data connections |
 | **Viewer** | Read-only — sees the dashboard exactly as configured, no filters/export/assistant |
 
@@ -250,7 +250,7 @@ Once both variables are set, the app automatically starts reading/writing throug
 
 ## Setting up server-side data refresh (recommended — no browser needed)
 
-Without this, a connected sheet only ever refreshes when someone with an open browser tab either clicks **Refresh data** or happens to have the tab open at the top of the hour (the app's own client-side hourly sync). If nobody's logged in, the data just sits there until someone is — which is confusing when you expect "latest data" to actually mean latest.
+Without this, a connected sheet only ever refreshes when the Admin, with an open browser tab, either clicks **Refresh data** or happens to have the tab open at 3 AM (the app's own client-side daily sync, Admin-only). If nobody's logged in, the data just sits there until someone is — which is confusing when you expect "latest data" to actually mean latest.
 
 This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refresh happens on Vercel's own clock, independent of anyone having the app open:
 

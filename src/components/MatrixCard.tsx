@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { Download, Trash2, Settings2 } from "lucide-react";
+import { Download, Trash2, Settings2, X } from "lucide-react";
 import type { DataRow, FilterConfig, Measure, MatrixConfig } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
+import { formatNumber } from "../lib/numeric";
 
 interface Props {
   config: MatrixConfig;
@@ -42,19 +43,23 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
   // × rowKeys × colKeys) scan) on every render, including ones triggered by
   // just typing in the title — that's what made editing feel like it froze
   // the page on large sheets.
+  const filteredRows = config.filter
+    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
+    : rows;
+
   const { rowKeys, colKeys, grid } = useMemo(() => {
     if (!hasColumns) return { rowKeys: [] as string[], colKeys: [] as string[], grid: [] as number[][] };
-    const rk = Array.from(new Set(rows.map((r) => String(r[config.rowCol] ?? "")))).sort();
-    const ck = Array.from(new Set(rows.map((r) => String(r[config.colCol] ?? "")))).sort();
+    const rk = Array.from(new Set(filteredRows.map((r) => String(r[config.rowCol] ?? "")))).sort();
+    const ck = Array.from(new Set(filteredRows.map((r) => String(r[config.colCol] ?? "")))).sort();
     const g = rk.map((r) =>
       ck.map((c) => {
-        const cellRows = rows.filter((row) => String(row[config.rowCol] ?? "") === r && String(row[config.colCol] ?? "") === c);
+        const cellRows = filteredRows.filter((row) => String(row[config.rowCol] ?? "") === r && String(row[config.colCol] ?? "") === c);
         return cellValue(cellRows, config, measures);
       })
     );
     return { rowKeys: rk, colKeys: ck, grid: g };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, config.rowCol, config.colCol, config.value, measures, hasColumns]);
+  }, [filteredRows, config.rowCol, config.colCol, config.value, measures, hasColumns]);
 
   const exportRows: DataRow[] = rowKeys.map((rk, i) => {
     const row: DataRow = { [config.rowCol]: rk };
@@ -139,6 +144,43 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
               </optgroup>
             )}
           </select>
+          <select
+            value={config.numberFormat ?? "auto"}
+            onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="auto">Auto (1.2K / 3.4M)</option>
+            <option value="full">Full number</option>
+          </select>
+          <select
+            value={config.filter?.column ?? ""}
+            onChange={(e) => {
+              const col = e.target.value;
+              if (!col) onChange({ ...config, filter: undefined });
+              else {
+                const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
+                onChange({ ...config, filter: { column: col, value: firstVal } });
+              }
+            }}
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="">No widget filter</option>
+            {columns.map((c) => <option key={c} value={c}>filter: {c}</option>)}
+          </select>
+          {config.filter && (
+            <>
+              <select
+                value={config.filter.value}
+                onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
+                className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              >
+                {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+              <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
+            </>
+          )}
         </div>
       )}
 
@@ -191,7 +233,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
                   </td>
                   {grid[i].map((v, j) => (
                     <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
-                      {v.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {formatNumber(v, config.numberFormat)}
                     </td>
                   ))}
                 </tr>

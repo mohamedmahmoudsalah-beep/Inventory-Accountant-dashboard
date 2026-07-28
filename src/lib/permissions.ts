@@ -10,9 +10,11 @@ export function canManageStructure(role?: Role): boolean {
   return role === "admin" || role === "manager";
 }
 
-/** Refresh an already-connected data source. */
+/** Refresh an already-connected data source. Admin-only — the Admin account
+ *  (mohamed.mahmoudsalah@breadfast.com) is the one who connects and refreshes
+ *  every sheet; Managers can edit charts/pivots but don't touch data sources. */
 export function canManageDataSources(role?: Role): boolean {
-  return role === "admin" || role === "manager";
+  return role === "admin";
 }
 
 /** Connect a NEW data source: Browse Drive, paste a link, import a file, combine sheets, or edit the data model. */
@@ -49,7 +51,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   admin: "Everything: manage users, teams/pages, data sources, exports, and widgets.",
-  manager: "Refresh already-connected data, edit charts/pivots, and export — can't connect new sources or manage users/teams.",
+  manager: "Add/rename/remove teams & pages, edit charts/pivots, and export — can't connect or refresh data sources, and can't manage users.",
   employee: "View dashboards, use filters, export chart/pivot data, and use the AI assistant. Can't edit widgets or connect data.",
   viewer: "Read-only: can view dashboards exactly as configured.",
 };

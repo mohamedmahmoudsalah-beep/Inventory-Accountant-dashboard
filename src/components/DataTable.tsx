@@ -63,7 +63,7 @@ export function DataTable({ rows, columns, editableColumns = [], canExport = tru
     setEditingCell(null);
   }
 
-  const DISPLAY_LIMIT = 100;
+  const DISPLAY_LIMIT = 10;
   const displayed = filtered.slice(0, DISPLAY_LIMIT);
 
   return (

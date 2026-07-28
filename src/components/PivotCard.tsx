@@ -3,6 +3,7 @@ import { Download, Trash2, Settings2, Plus, X, ArrowUpDown } from "lucide-react"
 import type { DataRow, FilterConfig, Measure, PivotConfig, PivotValueMetric } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
+import { formatNumber } from "../lib/numeric";
 
 interface Props {
   config: PivotConfig;
@@ -37,8 +38,12 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
   const groupCols = config.groupCols.filter(Boolean);
   const values = config.values.length > 0 ? config.values : [];
 
+  const filteredRows = config.filter
+    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
+    : rows;
+
   const groups = new Map<string, { keys: string[]; rows: DataRow[] }>();
-  rows.forEach((row) => {
+  filteredRows.forEach((row) => {
     const keys = groupCols.map((c) => String(row[c] ?? ""));
     const key = keys.join(" \u25b8 ");
     if (!groups.has(key)) groups.set(key, { keys, rows: [] });
@@ -245,6 +250,53 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
               </button>
             </div>
           </div>
+
+          <div>
+            <p className="text-[var(--text-dim)] mb-1.5">Number format</p>
+            <select
+              value={config.numberFormat ?? "auto"}
+              onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
+              className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            >
+              <option value="auto">Auto (1.2K / 3.4M / 2.1B)</option>
+              <option value="full">Full number</option>
+            </select>
+          </div>
+
+          <div>
+            <p className="text-[var(--text-dim)] mb-1.5">Filter this widget</p>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={config.filter?.column ?? ""}
+                onChange={(e) => {
+                  const col = e.target.value;
+                  if (!col) onChange({ ...config, filter: undefined });
+                  else {
+                    const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
+                    onChange({ ...config, filter: { column: col, value: firstVal } });
+                  }
+                }}
+                className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              >
+                <option value="">No filter</option>
+                {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {config.filter && (
+                <>
+                  <select
+                    value={config.filter.value}
+                    onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
+                    className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                  >
+                    {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -288,7 +340,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
                 })}
                 {r.metrics.map((m, j) => (
                   <td key={j} className="px-2 py-1.5 text-right num text-[var(--text)]">
-                    {m.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    {formatNumber(m, config.numberFormat)}
                   </td>
                 ))}
               </tr>

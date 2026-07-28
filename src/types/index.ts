@@ -1,3 +1,5 @@
+import type { NumberFormatMode } from "../lib/numeric";
+
 export type Role = "admin" | "manager" | "employee" | "viewer";
 
 export interface AllowedUser {
@@ -32,6 +34,8 @@ export interface ChartConfig {
   sortDir?: "asc" | "desc";
   rangeStart?: number; // 1-based rank to start showing from
   rangeEnd?: number; // 1-based rank to stop showing at (inclusive)
+  /** How the Y-axis and value labels display numbers. Undefined = "auto" (compact: K/M/B). */
+  numberFormat?: NumberFormatMode;
 }
 
 export interface FilterConfig {
@@ -40,6 +44,14 @@ export interface FilterConfig {
   value: string; // "All" means no filter (equals mode)
   from?: string; // range mode
   to?: string; // range mode
+}
+
+/** A simple "column equals value" filter scoped to one widget only (Pivot,
+ *  Matrix, Card), on top of whatever the page's own filter bar already
+ *  applies. Absent/undefined means the widget uses the page's rows as-is. */
+export interface WidgetFilter {
+  column: string;
+  value: string;
 }
 
 export interface DataRow {
@@ -69,6 +81,8 @@ export interface PivotConfig {
   rangeStart: number; // 1-based rank to start showing from
   rangeEnd: number; // 1-based rank to stop showing at (inclusive)
   layout?: WidgetLayout;
+  numberFormat?: NumberFormatMode;
+  filter?: WidgetFilter;
 }
 
 export interface MatrixConfig {
@@ -78,6 +92,8 @@ export interface MatrixConfig {
   colCol: string;
   value: ValueSource;
   layout?: WidgetLayout;
+  numberFormat?: NumberFormatMode;
+  filter?: WidgetFilter;
 }
 
 export interface CardConfig {
@@ -85,6 +101,8 @@ export interface CardConfig {
   title: string;
   value: ValueSource;
   layout?: WidgetLayout;
+  numberFormat?: NumberFormatMode;
+  filter?: WidgetFilter;
 }
 
 export interface TextConfig {

@@ -63,8 +63,8 @@ Once connected: **Refresh data** re-pulls the latest version manually, or toggle
 
 | Role | Can do |
 |---|---|
-| **Admin** | Everything: manage users, add/rename/delete teams & pages, connect data, edit widgets |
-| **Manager** | Same as Admin except can't manage the user list |
+| **Admin** | Everything: manage users, add/rename/delete teams & pages, connect/refresh data, edit widgets |
+| **Manager** | Add/rename/remove teams & pages, edit charts/pivots/matrices/cards, export — can't connect/refresh data sources or manage users |
 | **Employee** | View, filter, export, use the AI assistant — can't edit widgets or data connections |
 | **Viewer** | Read-only, sees the dashboard exactly as configured |
 
@@ -108,3 +108,11 @@ A chat panel that can answer questions about the currently-loaded data and sugge
 ## Where things stand
 
 The app is fully functional and deployed. The last few rounds of work fixed several real, previously-shipped bugs (a data-sync race condition, a user-list-wiping bug that could lock out admins, non-working widget resize, monochrome treemaps, and the Supabase realtime/replica-identity issue) — all confirmed via TypeScript type-checking and successful production builds before each delivery.
+
+## Latest session (this delivery)
+
+- **Manager role tightened further:** Managers can no longer connect, import, or refresh any data source (button is hidden) — only the Admin account does that now. Managers still add/rename/remove teams & pages and edit widgets.
+- **Background sync changed from hourly to once a day at 3 AM** (Admin-only, only runs if the Admin's tab happens to be open at that time).
+- **Number formatting:** Chart axes/value labels, Pivot cells, Matrix cells, and the Card's big number now abbreviate large values (e.g. 1,276,683,943 → 1.28B) by default. Every Chart/Pivot/Matrix/Card has a per-widget setting to switch to "Full number" instead.
+- **Per-widget filter:** Pivot, Matrix, and Card widgets each got their own "Filter this widget" control (pick a column + value) — independent of the page's shared filter bar, so one widget can show a narrower slice without affecting the rest of the page.
+- **Data table now shows the first 10 rows** (was 100) — Export still gets every row regardless.

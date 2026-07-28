@@ -357,9 +357,12 @@ function DashboardApp() {
   }, [activePage.id, activePage.sheetUrl, activePage.rows.length, user?.role, rowsLoadTick]);
 
   // Global, clock-aligned sync instead of continuous per-edit updates: once
-  // an hour (on the hour), re-fetch every sheet-connected page across every
-  // team and push the result once. The rest of the time, everyone just
-  // views whatever was last synced — no repeated fetching or writing.
+  // a day (at 3 AM, this browser's local time), re-fetch every sheet-connected
+  // page across every team and push the result once. The rest of the time,
+  // everyone just views whatever was last synced — no repeated fetching or
+  // writing. Admin-only (canManageDataSources is admin-only) — Managers don't
+  // touch data sources at all anymore, so this never runs for them even if
+  // their tab happens to be open at 3 AM.
   useEffect(() => {
     if (!canManageDataSources(user?.role)) return;
 
@@ -385,18 +388,19 @@ function DashboardApp() {
       setDepartments(current);
     }
 
-    function msUntilNextHour() {
+    function msUntilNext3AM() {
       const now = new Date();
       const next = new Date(now);
-      next.setMinutes(0, 0, 0);
-      next.setHours(now.getHours() + 1);
+      next.setHours(3, 0, 0, 0);
+      if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
       return next.getTime() - now.getTime();
     }
 
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     const timeoutId = setTimeout(function runAndReschedule() {
       syncAllSheetsNow();
-    }, msUntilNextHour());
-    const intervalId = setInterval(syncAllSheetsNow, 60 * 60 * 1000);
+    }, msUntilNext3AM());
+    const intervalId = setInterval(syncAllSheetsNow, ONE_DAY_MS);
 
     return () => {
       clearTimeout(timeoutId);

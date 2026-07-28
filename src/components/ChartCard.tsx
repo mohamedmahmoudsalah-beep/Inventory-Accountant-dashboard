@@ -7,7 +7,7 @@ import {
 import { Download, Trash2, Settings2 } from "lucide-react";
 import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
-import { parseNumeric } from "../lib/numeric";
+import { parseNumeric, formatNumber } from "../lib/numeric";
 
 const COLORS = ["#c81e94", "#57c99a", "#e94fb0", "#7aa2e8", "#f2b807", "#8a5fd6"];
 
@@ -155,6 +155,14 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               Show values
             </label>
           )}
+          <select
+            value={config.numberFormat ?? "auto"}
+            onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="auto">Auto (1.2K / 3.4M)</option>
+            <option value="full">Full number</option>
+          </select>
           <span className="w-full basis-full h-0" />
           <select
             value={config.sortDir ?? "desc"}
@@ -199,7 +207,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             <BarChart data={aggregated}>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
-              <YAxis stroke="var(--text-dim)" fontSize={11} />
+              <YAxis stroke="var(--text-dim)" fontSize={11} tickFormatter={(v) => formatNumber(Number(v), config.numberFormat)} />
               <Tooltip contentStyle={tooltipStyle} />
               <Bar
                 dataKey={config.yKey}
@@ -208,17 +216,33 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
                 cursor={onCrossFilter ? "pointer" : undefined}
                 onClick={(data: any) => onCrossFilter?.(config.xKey, String(data?.[config.xKey]))}
               >
-                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+                {config.showValues && (
+                  <LabelList
+                    dataKey={config.yKey}
+                    position="top"
+                    fontSize={10}
+                    fill="var(--text)"
+                    formatter={(v: unknown) => formatNumber(Number(v), config.numberFormat)}
+                  />
+                )}
               </Bar>
             </BarChart>
           ) : config.type === "line" ? (
             <LineChart data={aggregated}>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
-              <YAxis stroke="var(--text-dim)" fontSize={11} />
+              <YAxis stroke="var(--text-dim)" fontSize={11} tickFormatter={(v) => formatNumber(Number(v), config.numberFormat)} />
               <Tooltip contentStyle={tooltipStyle} />
               <Line type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }}>
-                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+                {config.showValues && (
+                  <LabelList
+                    dataKey={config.yKey}
+                    position="top"
+                    fontSize={10}
+                    fill="var(--text)"
+                    formatter={(v: unknown) => formatNumber(Number(v), config.numberFormat)}
+                  />
+                )}
               </Line>
             </LineChart>
           ) : config.type === "area" ? (
@@ -231,17 +255,25 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               </defs>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
-              <YAxis stroke="var(--text-dim)" fontSize={11} />
+              <YAxis stroke="var(--text-dim)" fontSize={11} tickFormatter={(v) => formatNumber(Number(v), config.numberFormat)} />
               <Tooltip contentStyle={tooltipStyle} />
               <Area type="monotone" dataKey={config.yKey} stroke="var(--accent)" strokeWidth={2} fill="url(#areaFill)">
-                {config.showValues && <LabelList dataKey={config.yKey} position="top" fontSize={10} fill="var(--text)" />}
+                {config.showValues && (
+                  <LabelList
+                    dataKey={config.yKey}
+                    position="top"
+                    fontSize={10}
+                    fill="var(--text)"
+                    formatter={(v: unknown) => formatNumber(Number(v), config.numberFormat)}
+                  />
+                )}
               </Area>
             </AreaChart>
           ) : config.type === "scatter" ? (
             <ScatterChart>
               <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
               <XAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} name={config.xKey} />
-              <YAxis dataKey={config.yKey} stroke="var(--text-dim)" fontSize={11} name={config.yKey} />
+              <YAxis dataKey={config.yKey} stroke="var(--text-dim)" fontSize={11} name={config.yKey} tickFormatter={(v) => formatNumber(Number(v), config.numberFormat)} />
               <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
               <Scatter data={aggregated} fill="var(--accent)" />
             </ScatterChart>
@@ -249,7 +281,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             <RadarChart data={aggregated}>
               <PolarGrid stroke="var(--border)" />
               <PolarAngleAxis dataKey={config.xKey} stroke="var(--text-dim)" fontSize={11} />
-              <PolarRadiusAxis stroke="var(--text-dim)" fontSize={10} />
+              <PolarRadiusAxis stroke="var(--text-dim)" fontSize={10} tickFormatter={(v) => formatNumber(Number(v), config.numberFormat)} />
               <Tooltip contentStyle={tooltipStyle} />
               <Radar dataKey={config.yKey} stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.4} />
             </RadarChart>

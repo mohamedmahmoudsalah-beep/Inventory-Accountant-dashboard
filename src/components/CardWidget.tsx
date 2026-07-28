@@ -1,6 +1,7 @@
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import type { CardConfig, DataRow, Measure } from "../types";
 import { aggregateColumn } from "../lib/aggregate";
+import { formatNumber } from "../lib/numeric";
 
 interface Props {
   config: CardConfig;
@@ -13,12 +14,16 @@ interface Props {
 }
 
 export function CardWidget({ config, rows, columns, measures, canEdit, onChange, onRemove }: Props) {
+  const filteredRows = config.filter
+    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
+    : rows;
+
   const value =
     config.value.kind === "column"
-      ? aggregateColumn(rows, config.value.column, config.value.agg)
+      ? aggregateColumn(filteredRows, config.value.column, config.value.agg)
       : (() => {
           const m = measures.find((mm) => mm.id === (config.value as { measureId: string }).measureId);
-          return m ? aggregateColumn(rows, m.column, m.agg, m.conditionColumn, m.conditionValue) : 0;
+          return m ? aggregateColumn(filteredRows, m.column, m.agg, m.conditionColumn, m.conditionValue) : 0;
         })();
 
   return (
@@ -68,9 +73,51 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
         </select>
       )}
 
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs">
+          <select
+            value={config.numberFormat ?? "auto"}
+            onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
+            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="auto">Auto (1.2K / 3.4M)</option>
+            <option value="full">Full number</option>
+          </select>
+          <select
+            value={config.filter?.column ?? ""}
+            onChange={(e) => {
+              const col = e.target.value;
+              if (!col) onChange({ ...config, filter: undefined });
+              else {
+                const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
+                onChange({ ...config, filter: { column: col, value: firstVal } });
+              }
+            }}
+            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          >
+            <option value="">No widget filter</option>
+            {columns.map((c) => <option key={c} value={c}>filter: {c}</option>)}
+          </select>
+          {config.filter && (
+            <>
+              <select
+                value={config.filter.value}
+                onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
+                className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              >
+                {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+              <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 flex items-center justify-center py-4">
         <span className="num text-4xl font-semibold text-[var(--text-h)]">
-          {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          {formatNumber(value, config.numberFormat)}
         </span>
       </div>
     </div>
