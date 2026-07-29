@@ -46,12 +46,17 @@ export interface FilterConfig {
   to?: string; // range mode
 }
 
-/** A simple "column equals value" filter scoped to one widget only (Pivot,
- *  Matrix, Card), on top of whatever the page's own filter bar already
- *  applies. Absent/undefined means the widget uses the page's rows as-is. */
+/** A filter scoped to one widget only (Pivot, Matrix, Card), on top of
+ *  whatever the page's own filter bar already applies. Absent/undefined
+ *  means the widget uses the page's rows as-is. For text columns only
+ *  "equals" makes sense (value = the exact match). For number columns,
+ *  "gt"/"lt" compare against `value`, and "between" uses `value` as the
+ *  lower bound and `value2` as the upper bound (inclusive). */
 export interface WidgetFilter {
   column: string;
+  mode?: "equals" | "gt" | "lt" | "between"; // defaults to "equals" when absent
   value: string;
+  value2?: string; // upper bound, "between" only
 }
 
 export interface DataRow {
@@ -129,6 +134,13 @@ export interface Measure {
   agg: PivotAgg;
   conditionColumn?: string;
   conditionValue?: string;
+  /** When set, this measure is computed from a formula referencing OTHER
+   *  measures and/or columns instead of a single column+aggregation — e.g.
+   *  "[Total Revenue] / [Total Cost] * 100" for a margin %. Column names
+   *  used this way mean sum(column) over the widget's rows; measure names
+   *  mean that measure's own already-computed value. When `formula` is set,
+   *  `column`/`agg`/`conditionColumn`/`conditionValue` are ignored. */
+  formula?: string;
 }
 
 export interface CalculatedColumn {

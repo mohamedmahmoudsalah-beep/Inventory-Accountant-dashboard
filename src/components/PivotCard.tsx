@@ -3,7 +3,10 @@ import { Download, Trash2, Settings2, Plus, X, ArrowUpDown } from "lucide-react"
 import type { DataRow, FilterConfig, Measure, PivotConfig, PivotValueMetric } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
+import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
+import { applyWidgetFilter } from "../lib/widgetFilter";
+import { WidgetFilterControl } from "./WidgetFilterControl";
 
 interface Props {
   config: PivotConfig;
@@ -27,7 +30,7 @@ function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measur
   }
   const measure = measures.find((m) => m.id === source.measureId);
   if (!measure) return 0;
-  return aggregateColumn(rows, measure.column, measure.agg, measure.conditionColumn, measure.conditionValue);
+  return computeMeasureValue(measure, rows, measures);
 }
 
 export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
@@ -38,9 +41,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
   const groupCols = config.groupCols.filter(Boolean);
   const values = config.values.length > 0 ? config.values : [];
 
-  const filteredRows = config.filter
-    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
-    : rows;
+  const filteredRows = applyWidgetFilter(rows, config.filter);
 
   const groups = new Map<string, { keys: string[]; rows: DataRow[] }>();
   filteredRows.forEach((row) => {
@@ -265,36 +266,14 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
 
           <div>
             <p className="text-[var(--text-dim)] mb-1.5">Filter this widget</p>
-            <div className="flex items-center gap-1.5">
-              <select
-                value={config.filter?.column ?? ""}
-                onChange={(e) => {
-                  const col = e.target.value;
-                  if (!col) onChange({ ...config, filter: undefined });
-                  else {
-                    const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
-                    onChange({ ...config, filter: { column: col, value: firstVal } });
-                  }
-                }}
-                className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-              >
-                <option value="">No filter</option>
-                {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              {config.filter && (
-                <>
-                  <select
-                    value={config.filter.value}
-                    onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
-                    className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-                  >
-                    {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
-                  </select>
-                  <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
-                </>
-              )}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <WidgetFilterControl
+                columns={columns}
+                rows={rows}
+                filter={config.filter}
+                onChange={(filter) => onChange({ ...config, filter })}
+                className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              />
             </div>
           </div>
         </div>

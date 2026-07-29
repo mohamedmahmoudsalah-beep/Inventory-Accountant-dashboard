@@ -14,6 +14,8 @@ declare global {
   }
 }
 
+import { getSupabase } from "./supabase";
+
 // Put your own values in a .env file (see .env.example) — never hard-code
 // real credentials directly in source if this repo will be public.
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
@@ -82,6 +84,45 @@ export function getCachedAccessToken(): string | null {
   return null;
 }
 
+let serverRefreshUnavailable = false;
+
+/** Tries to get a fresh Drive access token from our own server (see
+ *  api/drive-access-token.example.js) using a long-lived refresh token —
+ *  silently, no Google popup. Only ever works for the single allowed Drive
+ *  account, and only once that endpoint has been set up (see README's
+ *  "Never reconnecting Google Drive" section); otherwise this quietly does
+ *  nothing so the normal interactive-popup flow still works exactly as
+ *  before. Safe to call often — it no-ops after failing once per page load
+ *  rather than retrying a missing endpoint on every single data refresh. */
+export async function tryServerSideTokenRefresh(): Promise<string | null> {
+  const cached = getCachedAccessToken();
+  if (cached) return cached;
+  if (serverRefreshUnavailable) return null;
+
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    const jwt = data.session?.access_token;
+    if (!jwt) return null;
+
+    const res = await fetch("/api/drive-access-token", {
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+    if (!res.ok) {
+      serverRefreshUnavailable = true; // e.g. not set up yet, or a 403 for a non-admin — don't keep retrying
+      return null;
+    }
+    const json = await res.json();
+    if (!json.access_token) return null;
+    cacheToken(json.access_token, json.expires_in ?? 3600);
+    return json.access_token;
+  } catch {
+    serverRefreshUnavailable = true;
+    return null;
+  }
+}
+
 async function ensureGisLoaded() {
   if (gisLoaded) return;
   await loadScript("https://accounts.google.com/gsi/client");
@@ -110,6 +151,11 @@ async function getAccessToken(forceAccountPicker = false): Promise<string> {
   await ensureGisLoaded();
   const cached = getCachedAccessToken();
   if (cached && !forceAccountPicker) return cached;
+
+  if (!forceAccountPicker) {
+    const viaServer = await tryServerSideTokenRefresh();
+    if (viaServer) return viaServer;
+  }
 
   const resp = await new Promise<{ access_token: string; expires_in?: number }>((resolve, reject) => {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -190,7 +236,7 @@ export interface SheetTab {
 
 /** Lists the tab (worksheet) names inside a spreadsheet, so the user can pick one. */
 export async function listSheetTabs(spreadsheetId: string): Promise<SheetTab[]> {
-  const token = getCachedAccessToken();
+  const token = getCachedAccessToken() ?? (await tryServerSideTokenRefresh());
   if (!token) throw new Error("Not signed in to Google Drive yet.");
 
   const res = await fetch(

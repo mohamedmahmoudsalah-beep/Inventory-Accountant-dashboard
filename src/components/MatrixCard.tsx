@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
-import { Download, Trash2, Settings2, X } from "lucide-react";
+import { Download, Trash2, Settings2 } from "lucide-react";
 import type { DataRow, FilterConfig, Measure, MatrixConfig } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { aggregateColumn } from "../lib/aggregate";
+import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
+import { applyWidgetFilter } from "../lib/widgetFilter";
+import { WidgetFilterControl } from "./WidgetFilterControl";
 
 interface Props {
   config: MatrixConfig;
@@ -27,7 +30,7 @@ function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): 
   }
   const measure = measures.find((m) => m.id === source.measureId);
   if (!measure) return 0;
-  return aggregateColumn(rows, measure.column, measure.agg, measure.conditionColumn, measure.conditionValue);
+  return computeMeasureValue(measure, rows, measures);
 }
 
 export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
@@ -43,9 +46,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
   // × rowKeys × colKeys) scan) on every render, including ones triggered by
   // just typing in the title — that's what made editing feel like it froze
   // the page on large sheets.
-  const filteredRows = config.filter
-    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
-    : rows;
+  const filteredRows = applyWidgetFilter(rows, config.filter);
 
   const { rowKeys, colKeys, grid } = useMemo(() => {
     if (!hasColumns) return { rowKeys: [] as string[], colKeys: [] as string[], grid: [] as number[][] };
@@ -152,35 +153,13 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
             <option value="auto">Auto (1.2K / 3.4M)</option>
             <option value="full">Full number</option>
           </select>
-          <select
-            value={config.filter?.column ?? ""}
-            onChange={(e) => {
-              const col = e.target.value;
-              if (!col) onChange({ ...config, filter: undefined });
-              else {
-                const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
-                onChange({ ...config, filter: { column: col, value: firstVal } });
-              }
-            }}
+          <WidgetFilterControl
+            columns={columns}
+            rows={rows}
+            filter={config.filter}
+            onChange={(filter) => onChange({ ...config, filter })}
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="">No widget filter</option>
-            {columns.map((c) => <option key={c} value={c}>filter: {c}</option>)}
-          </select>
-          {config.filter && (
-            <>
-              <select
-                value={config.filter.value}
-                onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
-                className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-              >
-                {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-              <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
-            </>
-          )}
+          />
         </div>
       )}
 

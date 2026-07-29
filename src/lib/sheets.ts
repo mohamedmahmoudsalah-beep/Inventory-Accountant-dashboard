@@ -1,6 +1,6 @@
 import Papa from "papaparse";
 import type { DataRow } from "../types";
-import { getCachedAccessToken } from "./googleDrive";
+import { getCachedAccessToken, tryServerSideTokenRefresh } from "./googleDrive";
 
 export function extractSheetId(sheetUrl: string): string | null {
   const idMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -68,7 +68,7 @@ function rowsFromValues(values: string[][]): ParsedSheet {
  * "Browse from Drive").
  */
 export async function fetchSheetAsRows(sheetUrl: string, tabTitle?: string): Promise<ParsedSheet> {
-  const token = getCachedAccessToken();
+  const token = getCachedAccessToken() ?? (await tryServerSideTokenRefresh());
   const id = extractSheetId(sheetUrl);
 
   if (token && id) {

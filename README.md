@@ -4,6 +4,13 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**Latest round:**
+- **Card widget settings are now hidden behind a gear icon** (like Pivot/Matrix already were) instead of always showing.
+- **Fixed a timezone bug in the date-range filter** that silently dropped the first day of a range (e.g. "Jul 1 → Jul 31" was actually starting from Jul 2).
+- **"Filter this widget" now supports number comparisons** (greater than / less than / between) when the chosen column is numeric, not just an exact-match dropdown.
+- **Never reconnecting Google Drive:** a new optional server-side token refresh (reusing the same setup as the data-refresh cron) means the Admin's browser stops needing to redo the Google sign-in popup just to refresh already-connected sheets.
+- **Measures can now be formulas** — e.g. `[Total Revenue] / [Total Cost] * 100` — referencing other measures and/or columns, with a live autocomplete dropdown as you type (also added to Calculated columns' formula input).
+
 **A round of completeness/UX fixes and new features:**
 - **Manager role tightened:** Managers can no longer connect, import, or refresh any data source — only the Admin account does that now. Managers still add/rename/remove teams & pages and edit widgets. See "Roles & permissions" below.
 - **Daily sync instead of hourly:** the background data sync now runs once a day at 3 AM (Admin-only), instead of every hour.
@@ -333,6 +340,17 @@ This uses [Resend](https://resend.com) to actually send the email — free tier 
 5. Redeploy. `vercel.json` already registers this cron for `0 6 * * *` (once daily, ~6am UTC — before the data refresh at noon UTC, so adjust the two times if you want the report to reflect that day's *freshest* refresh instead).
 
 **Free "Hobby" plan limit:** Vercel's free tier allows a small number of cron jobs (2, at the time of writing) as long as each fires at most once a day — this report and the data-refresh cron above together fit within that. If you ever need a third daily cron, you'd need Vercel Pro.
+
+## Never reconnecting Google Drive (optional, recommended for the Admin account)
+
+By default, the Google sign-in used by "Browse from Drive"/"Refresh data" gives a short-lived token (~1 hour), cached only in that browser tab (`sessionStorage`) — so closing the browser, or the hour running out, means clicking through the Google popup again just to refresh a sheet you already connected.
+
+Since only the Admin account connects/refreshes data at all now (see "Roles & permissions"), this is worth fixing once: reuse the exact same long-lived refresh token already set up for the server-side cron (see "Setting up server-side data refresh" above) so the Admin's browser can silently mint a fresh token any time, no popup, ever again after this one-time setup.
+
+1. If you haven't already done "Setting up server-side data refresh" above, do that first — you need `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REFRESH_TOKEN`.
+2. Rename `api/drive-access-token.example.js` to `api/drive-access-token.js`.
+3. Make sure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are also set in Vercel (same ones the crons use) — this endpoint checks the caller's real signed-in session against those, so only the actual Admin account can ever use it.
+4. Deploy. From then on, "Refresh data" and "Browse from Drive" both silently pull a fresh token from this endpoint first, falling back to the old interactive popup only if it isn't set up (or if a different, non-admin account somehow tries).
 
 ## Keeping Supabase from pausing (optional, fixes the "opens empty, works a moment later" pattern)
 

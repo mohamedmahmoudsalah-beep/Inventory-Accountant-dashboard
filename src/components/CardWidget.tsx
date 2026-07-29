@@ -1,7 +1,11 @@
-import { Trash2, X, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Trash2, TrendingUp, TrendingDown, AlertTriangle, Settings2 } from "lucide-react";
 import type { CardConfig, DataRow, Measure } from "../types";
 import { aggregateColumn } from "../lib/aggregate";
+import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
+import { applyWidgetFilter } from "../lib/widgetFilter";
+import { WidgetFilterControl } from "./WidgetFilterControl";
 
 interface Props {
   config: CardConfig;
@@ -16,7 +20,7 @@ interface Props {
 function computeValue(subset: DataRow[], config: CardConfig, measures: Measure[]): number {
   if (config.value.kind === "column") return aggregateColumn(subset, config.value.column, config.value.agg);
   const m = measures.find((mm) => mm.id === (config.value as { measureId: string }).measureId);
-  return m ? aggregateColumn(subset, m.column, m.agg, m.conditionColumn, m.conditionValue) : 0;
+  return m ? computeMeasureValue(m, subset, measures) : 0;
 }
 
 function monthKey(dateStr: unknown): string | null {
@@ -27,10 +31,9 @@ function monthKey(dateStr: unknown): string | null {
 }
 
 export function CardWidget({ config, rows, columns, measures, canEdit, onChange, onRemove }: Props) {
-  const filteredRows = config.filter
-    ? rows.filter((r) => String(r[config.filter!.column] ?? "") === config.filter!.value)
-    : rows;
+  const [showEditor, setShowEditor] = useState(false);
 
+  const filteredRows = applyWidgetFilter(rows, config.filter);
   const value = computeValue(filteredRows, config, measures);
 
   const alert = config.alertThreshold
@@ -84,123 +87,104 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
           </h3>
         )}
         {canEdit && (
-          <button onClick={onRemove} title="Remove" className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]">
-            <Trash2 size={14} />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => setShowEditor((s) => !s)} title="Edit"
+              className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">
+              <Settings2 size={14} />
+            </button>
+            <button onClick={onRemove} title="Remove" className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]">
+              <Trash2 size={14} />
+            </button>
+          </div>
         )}
       </div>
 
-      {canEdit && (
-        <select
-          value={config.value.kind === "column" ? `column:${config.value.column}:${config.value.agg}` : `measure:${config.value.measureId}`}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
-            else {
-              const [, col, agg] = val.split(":");
-              onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
-            }
-          }}
-          className="mb-3 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-xs text-[var(--text)]"
-        >
-          <optgroup label="Columns">
-            {columns.flatMap((col) =>
-              (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
-                <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
-              ))
-            )}
-          </optgroup>
-          {measures.length > 0 && (
-            <optgroup label="Measures">
-              {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>★ {m.name}</option>)}
-            </optgroup>
-          )}
-        </select>
-      )}
-
-      {canEdit && (
-        <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs">
+      {canEdit && showEditor && (
+        <div className="mb-2 space-y-2">
           <select
-            value={config.numberFormat ?? "auto"}
-            onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="auto">Auto (1.2K / 3.4M)</option>
-            <option value="full">Full number</option>
-          </select>
-          <select
-            value={config.filter?.column ?? ""}
+            value={config.value.kind === "column" ? `column:${config.value.column}:${config.value.agg}` : `measure:${config.value.measureId}`}
             onChange={(e) => {
-              const col = e.target.value;
-              if (!col) onChange({ ...config, filter: undefined });
+              const val = e.target.value;
+              if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
               else {
-                const firstVal = String(rows.find((r) => r[col] !== undefined)?.[col] ?? "");
-                onChange({ ...config, filter: { column: col, value: firstVal } });
+                const [, col, agg] = val.split(":");
+                onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
               }
             }}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-xs text-[var(--text)]"
           >
-            <option value="">No widget filter</option>
-            {columns.map((c) => <option key={c} value={c}>filter: {c}</option>)}
+            <optgroup label="Columns">
+              {columns.flatMap((col) =>
+                (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
+                  <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
+                ))
+              )}
+            </optgroup>
+            {measures.length > 0 && (
+              <optgroup label="Measures">
+                {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>★ {m.name}</option>)}
+              </optgroup>
+            )}
           </select>
-          {config.filter && (
-            <>
-              <select
-                value={config.filter.value}
-                onChange={(e) => onChange({ ...config, filter: { column: config.filter!.column, value: e.target.value } })}
-                className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-              >
-                {Array.from(new Set(rows.map((r) => String(r[config.filter!.column] ?? "")))).sort().map((v) => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-              <button onClick={() => onChange({ ...config, filter: undefined })} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
-            </>
-          )}
-        </div>
-      )}
 
-      {canEdit && (
-        <div className="flex flex-wrap items-center gap-1.5 mb-2 text-xs border-t border-[var(--border)] pt-2">
-          <select
-            value={config.alertThreshold?.direction ?? ""}
-            onChange={(e) => {
-              const dir = e.target.value as "" | "below" | "above";
-              if (!dir) onChange({ ...config, alertThreshold: undefined });
-              else onChange({ ...config, alertThreshold: { direction: dir, value: config.alertThreshold?.value ?? 0 } });
-            }}
-            className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="">No alert</option>
-            <option value="below">Alert if below</option>
-            <option value="above">Alert if above</option>
-          </select>
-          {config.alertThreshold && (
-            <input
-              type="number"
-              value={config.alertThreshold.value}
-              onChange={(e) => onChange({ ...config, alertThreshold: { direction: config.alertThreshold!.direction, value: Number(e.target.value) } })}
-              className="w-28 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-            />
-          )}
-          <label className="flex items-center gap-1 text-[var(--text-dim)] cursor-pointer ml-1">
-            <input
-              type="checkbox"
-              checked={config.compareEnabled ?? false}
-              onChange={(e) => onChange({ ...config, compareEnabled: e.target.checked })}
-            />
-            vs last month
-          </label>
-          {config.compareEnabled && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <select
-              value={config.compareDateColumn ?? ""}
-              onChange={(e) => onChange({ ...config, compareDateColumn: e.target.value })}
+              value={config.numberFormat ?? "auto"}
+              onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
               className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
             >
-              <option value="">date column…</option>
-              {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="auto">Auto (1.2K / 3.4M)</option>
+              <option value="full">Full number</option>
             </select>
-          )}
+            <WidgetFilterControl
+              columns={columns}
+              rows={rows}
+              filter={config.filter}
+              onChange={(filter) => onChange({ ...config, filter })}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-xs border-t border-[var(--border)] pt-2">
+            <select
+              value={config.alertThreshold?.direction ?? ""}
+              onChange={(e) => {
+                const dir = e.target.value as "" | "below" | "above";
+                if (!dir) onChange({ ...config, alertThreshold: undefined });
+                else onChange({ ...config, alertThreshold: { direction: dir, value: config.alertThreshold?.value ?? 0 } });
+              }}
+              className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+            >
+              <option value="">No alert</option>
+              <option value="below">Alert if below</option>
+              <option value="above">Alert if above</option>
+            </select>
+            {config.alertThreshold && (
+              <input
+                type="number"
+                value={config.alertThreshold.value}
+                onChange={(e) => onChange({ ...config, alertThreshold: { direction: config.alertThreshold!.direction, value: Number(e.target.value) } })}
+                className="w-28 bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              />
+            )}
+            <label className="flex items-center gap-1 text-[var(--text-dim)] cursor-pointer ml-1">
+              <input
+                type="checkbox"
+                checked={config.compareEnabled ?? false}
+                onChange={(e) => onChange({ ...config, compareEnabled: e.target.checked })}
+              />
+              vs last month
+            </label>
+            {config.compareEnabled && (
+              <select
+                value={config.compareDateColumn ?? ""}
+                onChange={(e) => onChange({ ...config, compareDateColumn: e.target.value })}
+                className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+              >
+                <option value="">date column…</option>
+                {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+          </div>
         </div>
       )}
 

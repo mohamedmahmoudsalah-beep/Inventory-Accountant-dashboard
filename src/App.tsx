@@ -68,17 +68,38 @@ function makeDefaultDepartment(id: string, name: string): Department {
   };
 }
 
+// Parses a date consistently as LOCAL time, whatever format it's in. This
+// matters because JS's Date parsing is inconsistent by design: a pure
+// "YYYY-MM-DD" string (like what a <input type="date"> gives, or how many
+// spreadsheet exports write dates) is parsed as UTC midnight, while almost
+// every OTHER format ("7/1/2026", "01-Jul-2026", etc.) is parsed as LOCAL
+// midnight. Mixing the two — the filter's own from/to boundaries coming out
+// UTC while the actual row dates come out local (or vice versa) — silently
+// shifts the boundary by your timezone offset. In Cairo (UTC+2/+3) that's
+// enough to drop the very first day of a "day 1 -> day 31" range, making it
+// look like the range actually starts on day 2.
+function parseDateLocal(value: unknown): Date {
+  if (value instanceof Date) return value;
+  const str = String(value ?? "").trim();
+  const isoDateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+  if (isoDateOnly) {
+    const [, y, m, d] = isoDateOnly;
+    return new Date(Number(y), Number(m) - 1, Number(d)); // local midnight, not UTC
+  }
+  return new Date(str);
+}
+
 function passesFilter(row: DataRow, f: FilterConfig): boolean {
   if (f.mode === "range") {
     const raw = row[f.column];
-    const cellDate = new Date(String(raw));
+    const cellDate = parseDateLocal(raw);
     if (isNaN(cellDate.getTime())) return true;
     if (f.from) {
-      const from = new Date(f.from);
+      const from = parseDateLocal(f.from);
       if (cellDate < from) return false;
     }
     if (f.to) {
-      const to = new Date(f.to);
+      const to = parseDateLocal(f.to);
       to.setHours(23, 59, 59, 999);
       if (cellDate > to) return false;
     }

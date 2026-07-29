@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X, Plus, Trash2, Sparkles } from "lucide-react";
 import type { CalculatedColumn, Measure, PivotAgg } from "../types";
+import { FormulaInput } from "./FormulaInput";
 
 interface Props {
   columns: string[];
@@ -178,32 +179,72 @@ export function DataModelPanel({
         ) : tab === "measures" ? (
           <div>
             <p className="text-xs text-[var(--text-dim)] mb-3">
-              A measure is a saved aggregation you can reuse as a value in any Pivot, Matrix, or Card widget — e.g. "Cairo Revenue = sum(revenue) where region = Cairo".
+              A measure is a saved aggregation you can reuse as a value in any Pivot, Matrix, or Card widget — e.g. "Cairo Revenue = sum(revenue) where region = Cairo". Switch a measure to <span className="text-[var(--text)]">Formula</span> to combine it with other measures/columns instead — e.g. dividing one by another for a ratio or a %.
             </p>
             <div className="space-y-2">
               {measures.map((m, i) => (
-                <div key={m.id} className="p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] flex flex-wrap items-center gap-2 text-xs">
-                  <input value={m.name} onChange={(e) => updateMeasure(i, { name: e.target.value })}
-                    className="flex-1 min-w-[120px] bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]" placeholder="Measure name" />
-                  <select value={m.agg} onChange={(e) => updateMeasure(i, { agg: e.target.value as PivotAgg })}
-                    className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                    {AGGS.map((a) => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                  <select value={m.column} onChange={(e) => updateMeasure(i, { column: e.target.value })}
-                    className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                    {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  <span className="text-[var(--text-dim)]">where</span>
-                  <select value={m.conditionColumn ?? ""} onChange={(e) => updateMeasure(i, { conditionColumn: e.target.value || undefined })}
-                    className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                    <option value="">(none)</option>
-                    {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  <span className="text-[var(--text-dim)]">=</span>
-                  <input value={m.conditionValue ?? ""} onChange={(e) => updateMeasure(i, { conditionValue: e.target.value })}
-                    placeholder="value" disabled={!m.conditionColumn}
-                    className="w-24 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)] disabled:opacity-40" />
-                  <button onClick={() => removeMeasure(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><Trash2 size={14} /></button>
+                <div key={m.id} className="p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] text-xs space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input value={m.name} onChange={(e) => updateMeasure(i, { name: e.target.value })}
+                      className="flex-1 min-w-[120px] bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]" placeholder="Measure name" />
+                    <div className="flex bg-[var(--panel)] border border-[var(--border)] rounded-md p-0.5">
+                      <button
+                        onClick={() => updateMeasure(i, { formula: undefined })}
+                        className={`px-2 py-1 rounded ${m.formula === undefined ? "bg-[var(--accent-dim)] text-[var(--text-h)]" : "text-[var(--text-dim)]"}`}
+                      >
+                        Simple
+                      </button>
+                      <button
+                        onClick={() => updateMeasure(i, { formula: m.formula ?? `[${m.name}]` })}
+                        className={`px-2 py-1 rounded ${m.formula !== undefined ? "bg-[var(--accent-dim)] text-[var(--text-h)]" : "text-[var(--text-dim)]"}`}
+                      >
+                        Formula
+                      </button>
+                    </div>
+                    <button onClick={() => removeMeasure(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><Trash2 size={14} /></button>
+                  </div>
+
+                  {m.formula !== undefined ? (
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[var(--text-dim)] shrink-0">=</span>
+                        <FormulaInput
+                          value={m.formula}
+                          onChange={(formula) => updateMeasure(i, { formula })}
+                          suggestions={[
+                            ...measures.filter((mm) => mm.id !== m.id).map((mm) => ({ name: mm.name, kind: "measure" as const })),
+                            ...columns.map((c) => ({ name: c, kind: "column" as const })),
+                          ]}
+                          placeholder="e.g. [Total Revenue] / [Total Cost] * 100"
+                          className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)] font-mono"
+                        />
+                      </div>
+                      <p className="text-[var(--text-dim)] mt-1.5">
+                        Type a letter to see matching measures/columns and click one to insert it. <code className="text-[var(--text)]">[Measure Name]</code> uses that measure's value; <code className="text-[var(--text)]">[Column Name]</code> means sum of that column. Use +, -, *, /.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select value={m.agg} onChange={(e) => updateMeasure(i, { agg: e.target.value as PivotAgg })}
+                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+                        {AGGS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      </select>
+                      <select value={m.column} onChange={(e) => updateMeasure(i, { column: e.target.value })}
+                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+                        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <span className="text-[var(--text-dim)]">where</span>
+                      <select value={m.conditionColumn ?? ""} onChange={(e) => updateMeasure(i, { conditionColumn: e.target.value || undefined })}
+                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
+                        <option value="">(none)</option>
+                        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <span className="text-[var(--text-dim)]">=</span>
+                      <input value={m.conditionValue ?? ""} onChange={(e) => updateMeasure(i, { conditionValue: e.target.value })}
+                        placeholder="value" disabled={!m.conditionColumn}
+                        className="w-24 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)] disabled:opacity-40" />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -230,8 +271,12 @@ export function DataModelPanel({
                   <input value={c.name} onChange={(e) => updateCalcCol(i, { name: e.target.value })}
                     className="w-36 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]" placeholder="Column name" />
                   <span className="text-[var(--text-dim)]">=</span>
-                  <input value={c.formula} onChange={(e) => updateCalcCol(i, { formula: e.target.value })}
-                    className="flex-1 min-w-[160px] bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)] font-mono" placeholder="formula" />
+                  <FormulaInput
+                    value={c.formula}
+                    onChange={(formula) => updateCalcCol(i, { formula })}
+                    suggestions={columns.map((col) => ({ name: col, kind: "column" as const }))}
+                    placeholder="formula"
+                  />
                   <button onClick={() => removeCalcCol(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><Trash2 size={14} /></button>
                 </div>
               ))}
