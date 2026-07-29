@@ -1,4 +1,10 @@
-import html2canvas from "html2canvas";
+// html2canvas-pro (not plain html2canvas): Tailwind v4's generated CSS uses
+// modern color functions (oklch/oklab) for its color palette, which the
+// original html2canvas (last real release: 1.4.1) throws on with
+// 'Attempting to parse an unsupported color function "oklab"'. html2canvas-pro
+// is a drop-in fork with the exact same API that actually understands
+// oklch/oklab/lab/lch/color() — same call below, just a different import.
+import html2canvas from "html2canvas-pro";
 import jsPDF from "jspdf";
 import { showToast, dismissToast } from "./toast";
 
