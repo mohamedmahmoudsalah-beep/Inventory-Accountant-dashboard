@@ -1,5 +1,6 @@
 import { getSupabase } from "./supabase";
 import { savePersistedState, loadPersistedState } from "./persistence";
+import { showToast } from "./toast";
 import type {
   Department, TaskPage, DataRow, ChartConfig, PivotConfig, MatrixConfig, CardConfig, TextConfig,
 } from "../types";
@@ -8,6 +9,49 @@ const TEAMS = "teams";
 const PAGES = "pages";
 const WIDGETS = "widgets";
 const PAGE_ROW_CHUNKS = "page_row_chunks";
+const ACTIVITY_LOG = "activity_log";
+
+/** Best-effort audit trail: "who did what, when" for the high-level actions
+ *  (team/page create-rename-delete, connecting/refreshing data, user
+ *  management). Deliberately fire-and-forget — a logging failure should
+ *  never block or fail the actual action it's describing, so errors here
+ *  are only logged to the console, never surfaced to the person. Requires
+ *  the `activity_log` table from the README's Supabase setup; silently does
+ *  nothing if Supabase isn't configured or the table doesn't exist yet. */
+export async function logActivity(actorEmail: string, action: string, details?: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from(ACTIVITY_LOG).insert({ actor_email: actorEmail, action, details });
+    if (error) console.warn("Activity log: failed to record entry (non-fatal).", error);
+  } catch (e) {
+    console.warn("Activity log: failed to record entry (non-fatal).", e);
+  }
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  actor_email: string;
+  action: string;
+  details: string | null;
+  created_at: string;
+}
+
+/** Fetches the most recent activity log entries, newest first. */
+export async function loadActivityLog(limit = 100): Promise<ActivityLogEntry[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from(ACTIVITY_LOG)
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.warn("Activity log: failed to load entries.", error);
+    return [];
+  }
+  return (data ?? []) as ActivityLogEntry[];
+}
 
 // A page's rows used to be stuffed into a single jsonb column (pages.rows)
 // as one giant array. For a big sheet (100k+ rows), that one write is a
@@ -261,10 +305,9 @@ function warnSaveFailedOnce(context: string, error: unknown) {
   console.error(`Supabase: failed to save ${context} — this change was NOT saved for other devices.`, error);
   if (!saveFailWarned) {
     saveFailWarned = true;
-    alert(
-      "Your changes are only saved in this browser right now — they didn't save to the shared database. " +
-        "Open the browser console (F12 → Console) for the exact error, or check that the Supabase SQL setup " +
-        "was run on this exact project and that VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY are correct."
+    showToast(
+      `Couldn't save ${context} to the shared database — it's only in this browser right now. Check the console (F12) or your Supabase setup.`,
+      { type: "error", durationMs: 8000 }
     );
   }
 }

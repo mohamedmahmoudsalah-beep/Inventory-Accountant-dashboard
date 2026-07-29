@@ -17,12 +17,13 @@ import { AIAssistant } from "./components/AIAssistant";
 import { NamePromptModal } from "./components/NamePromptModal";
 import { DataSourcesView } from "./components/DataSourcesView";
 import { UserManagement } from "./components/UserManagement";
+import { ActivityLogView } from "./components/ActivityLogView";
 import { DataModelPanel } from "./components/DataModelPanel";
 import { GRID_COLS, GRID_ROW_HEIGHT, GRID_MARGIN, DEFAULT_GRID_SIZE, MIN_GRID_SIZE, hasGridLayout } from "./lib/gridLayout";
 import { fetchSheetAsRows } from "./lib/sheets";
 import {
   loadAllTeams, saveTeamRemote, deleteTeamRemote, savePageRemote, deletePageRemote,
-  saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges, loadPageRows,
+  saveWidgetRemote, deleteWidgetRemote, subscribeToTeamsChanges, loadPageRows, logActivity,
 } from "./lib/remoteDb";
 import { savePersistedState } from "./lib/persistence";
 import {
@@ -32,6 +33,8 @@ import {
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
 import { getStoredTheme, applyTheme, type Theme } from "./lib/theme";
+import { showToast } from "./lib/toast";
+import { exportElementToPdf } from "./lib/pdfExport";
 import type {
   CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig,
   MatrixConfig, Measure, PivotConfig, TextConfig, TaskPage,
@@ -100,7 +103,19 @@ function DashboardApp() {
   const [activeDeptId, setActiveDeptId] = useState("sales");
   const [activePageId, setActivePageId] = useState("sales-overview");
   const [stateReady, setStateReady] = useState(false);
-  const [view, setView] = useState<"dashboard" | "dataSources" | "users">("dashboard");
+  const [view, setView] = useState<"dashboard" | "dataSources" | "users" | "activityLog">("dashboard");
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  async function handleExportPdf() {
+    const el = document.getElementById("dashboard-page-content");
+    if (!el) return;
+    setExportingPdf(true);
+    try {
+      await exportElementToPdf(el, `${activePage.name.replace(/[^a-z0-9]+/gi, "-")}.pdf`);
+    } finally {
+      setExportingPdf(false);
+    }
+  }
   const [refreshing, setRefreshing] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
   const [showDataModel, setShowDataModel] = useState(false);
@@ -456,15 +471,19 @@ function DashboardApp() {
       // sheet's row data can take a while to write; that should only ever
       // start when you choose to, not silently right after every fetch.
       setPendingRowSave({ deptId: activeDept.id, page: updatedPage });
+      if (!silent && user?.email) {
+        logActivity(user.email, sourceType ? "data_source_connected" : "data_refreshed", activePage.name);
+      }
     } catch (e) {
       if (silent) {
         console.warn("Silent auto-load of a connected sheet failed (not shown to the person):", e);
         return;
       }
-      alert(
+      showToast(
         e instanceof Error && e.message !== "Failed to fetch"
           ? e.message
-          : "Couldn't load this sheet directly. It's probably private — either share it as \"Anyone with the link can view\", or use \"Browse from Drive\" to sign in and pick it without changing its sharing settings."
+          : "Couldn't load this sheet directly. It's probably private — either share it as \"Anyone with the link can view\", or use \"Browse from Drive\" to sign in and pick it without changing its sharing settings.",
+        { type: "error", durationMs: 7000 }
       );
     } finally {
       setRefreshing(false);
@@ -775,6 +794,7 @@ function DashboardApp() {
     setView("dashboard");
     syncTeam(dept);
     syncPage(dept.pages[0], dept.id);
+    if (user?.email) logActivity(user.email, "team_created", name);
   }
 
   function addPage(deptId: string, name: string) {
@@ -787,6 +807,7 @@ function DashboardApp() {
     setAddPageForDept(null);
     setView("dashboard");
     syncPage(page, deptId);
+    if (user?.email) logActivity(user.email, "page_created", name);
   }
 
   function renameDepartmentTo(deptId: string, name: string) {
@@ -794,21 +815,60 @@ function DashboardApp() {
     setDepartments(next);
     setRenameDept(null);
     syncTeam({ id: deptId, name });
+    if (user?.email) logActivity(user.email, "team_renamed", name);
   }
+
+  // Pending soft-deletes: id -> the timeout that will perform the real
+  // remote delete unless "Undo" is clicked first. Deleting shows the item's
+  // teams/page removed from view immediately, but the actual Supabase
+  // delete (and its cascade to pages/widgets) only happens a few seconds
+  // later, giving a real "Undo" window instead of a one-shot confirm().
+  const pendingDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const UNDO_WINDOW_MS = 6000;
 
   function deleteDepartment(deptId: string) {
     if (departments.length <= 1) {
-      alert("You need at least one team.");
+      showToast("You need at least one team.", { type: "error" });
       return;
     }
-    if (!confirm("Delete this team and all its pages? This can't be undone.")) return;
+    const removedDept = departments.find((d) => d.id === deptId);
+    if (!removedDept) return;
+    const removedIndex = departments.indexOf(removedDept);
     const next = departments.filter((d) => d.id !== deptId);
     setDepartments(next);
     if (activeDeptId === deptId) {
       setActiveDeptId(next[0].id);
       setActivePageId(next[0].pages[0].id);
     }
-    syncDeleteTeam(deptId); // cascades to that team's pages/widgets in the database too
+
+    const timer = setTimeout(() => {
+      pendingDeleteTimers.current.delete(deptId);
+      syncDeleteTeam(deptId); // cascades to that team's pages/widgets in the database too
+      if (user?.email) logActivity(user.email, "team_deleted", removedDept.name);
+    }, UNDO_WINDOW_MS);
+    pendingDeleteTimers.current.set(deptId, timer);
+
+    showToast(`Team "${removedDept.name}" deleted.`, {
+      type: "info",
+      durationMs: UNDO_WINDOW_MS,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const pending = pendingDeleteTimers.current.get(deptId);
+          if (pending) {
+            clearTimeout(pending);
+            pendingDeleteTimers.current.delete(deptId);
+          }
+          setDepartments((current) => {
+            const restored = [...current];
+            restored.splice(Math.min(removedIndex, restored.length), 0, removedDept);
+            return restored;
+          });
+          setActiveDeptId(deptId);
+          setActivePageId(removedDept.pages[0]?.id ?? "");
+        },
+      },
+    });
   }
 
   function renamePageTo(deptId: string, pageId: string, name: string) {
@@ -819,22 +879,55 @@ function DashboardApp() {
     setRenamePageTarget(null);
     const updatedPage = next.find((d) => d.id === deptId)?.pages.find((p) => p.id === pageId);
     if (updatedPage) syncPage(updatedPage, deptId);
+    if (user?.email) logActivity(user.email, "page_renamed", name);
   }
 
   function deletePage(deptId: string, pageId: string) {
     const dept = departments.find((d) => d.id === deptId);
     if (!dept || dept.pages.length <= 1) {
-      alert("A team needs at least one page.");
+      showToast("A team needs at least one page.", { type: "error" });
       return;
     }
-    if (!confirm("Delete this page? This can't be undone.")) return;
+    const removedPage = dept.pages.find((p) => p.id === pageId);
+    if (!removedPage) return;
+    const removedIndex = dept.pages.indexOf(removedPage);
     const next = departments.map((d) => (d.id === deptId ? { ...d, pages: d.pages.filter((p) => p.id !== pageId) } : d));
     setDepartments(next);
     if (activePageId === pageId) {
       const remaining = dept.pages.filter((p) => p.id !== pageId);
       setActivePageId(remaining[0].id);
     }
-    syncDeletePage(pageId); // cascades to that page's widgets in the database too
+
+    const timer = setTimeout(() => {
+      pendingDeleteTimers.current.delete(pageId);
+      syncDeletePage(pageId); // cascades to that page's widgets in the database too
+      if (user?.email) logActivity(user.email, "page_deleted", removedPage.name);
+    }, UNDO_WINDOW_MS);
+    pendingDeleteTimers.current.set(pageId, timer);
+
+    showToast(`Page "${removedPage.name}" deleted.`, {
+      type: "info",
+      durationMs: UNDO_WINDOW_MS,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const pending = pendingDeleteTimers.current.get(pageId);
+          if (pending) {
+            clearTimeout(pending);
+            pendingDeleteTimers.current.delete(pageId);
+          }
+          setDepartments((current) =>
+            current.map((d) => {
+              if (d.id !== deptId) return d;
+              const restoredPages = [...d.pages];
+              restoredPages.splice(Math.min(removedIndex, restoredPages.length), 0, removedPage);
+              return { ...d, pages: restoredPages };
+            })
+          );
+          setActivePageId(pageId);
+        },
+      },
+    });
   }
 
   const canEdit = canEditWidgets(user?.role);
@@ -862,6 +955,7 @@ function DashboardApp() {
         activePageId={activePageId}
         showingDataSources={view === "dataSources"}
         showingUsers={view === "users"}
+        showingActivityLog={view === "activityLog"}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onSelectPage={(deptId, pageId) => {
@@ -871,6 +965,7 @@ function DashboardApp() {
         }}
         onSelectDataSources={() => setView("dataSources")}
         onSelectUsers={() => setView("users")}
+        onSelectActivityLog={() => setView("activityLog")}
         onAddDepartment={() => setAddDeptOpen(true)}
         onAddPage={(deptId) => setAddPageForDept(deptId)}
         onRenameDepartment={(deptId) => setRenameDept(deptId)}
@@ -895,6 +990,8 @@ function DashboardApp() {
           <DataSourcesView departments={departments} />
         ) : view === "users" ? (
           <UserManagement />
+        ) : view === "activityLog" ? (
+          <ActivityLogView />
         ) : (
           <>
             <TopBar
@@ -907,6 +1004,8 @@ function DashboardApp() {
               hasPendingSave={pendingRowSave?.page.id === activePage.id}
               saveProgress={pendingRowSave?.page.id === activePage.id ? saveProgress : null}
               onSaveNow={handleSaveRowsNow}
+              onExportPdf={handleExportPdf}
+              exportingPdf={exportingPdf}
             />
 
             <FilterBar
@@ -917,7 +1016,7 @@ function DashboardApp() {
               readOnly={!canFilter}
             />
 
-            <div className="p-6 space-y-4">
+            <div id="dashboard-page-content" className="p-6 space-y-4">
               {effective.columns.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center text-sm text-[var(--text-dim)] space-y-3">
                   {loadError ? (
@@ -1088,7 +1187,14 @@ function DashboardApp() {
 }
 
 function Gate() {
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
+  if (!authReady) {
+    return (
+      <div className="min-h-svh flex items-center justify-center bg-[var(--bg)] text-[var(--text-dim)] text-sm">
+        Loading…
+      </div>
+    );
+  }
   return user ? <DashboardApp /> : <LoginScreen />;
 }
 

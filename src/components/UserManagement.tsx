@@ -1,3 +1,4 @@
+import { showToast } from "../lib/toast";
 import { useState } from "react";
 import { Trash2, UserPlus, Globe, HardDrive } from "lucide-react";
 import { useAuth } from "../lib/auth";
@@ -8,15 +9,16 @@ import type { Role } from "../types";
 const ROLES: Role[] = ["admin", "manager", "employee", "viewer"];
 
 export function UserManagement() {
-  const { users, usersLoading, addUser, updateUserRole, removeUser } = useAuth();
+  const { users, usersLoading, addUser, updateUserRole, removeUser, usesRealAuth } = useAuth();
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<Role>("employee");
+  const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const shared = isSupabaseConfigured();
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
-    const result = await addUser(newEmail, newRole);
+    const result = await addUser(newEmail, newRole, newPassword);
     if (!result.ok) {
       setError(result.message ?? "Couldn't add that user.");
       return;
@@ -24,16 +26,26 @@ export function UserManagement() {
     setError(null);
     setNewEmail("");
     setNewRole("employee");
+    setNewPassword("");
+    if (usesRealAuth) {
+      showToast(`Added ${newEmail} — share their password with them directly (not over an unsecured channel).`, { type: "success", durationMs: 6000 });
+    }
   }
 
   async function handleRoleChange(email: string, role: Role) {
     const result = await updateUserRole(email, role);
-    if (!result.ok) alert(result.message);
+    if (!result.ok) showToast(result.message ?? "Something went wrong.", { type: "error" });
   }
 
   async function handleRemove(email: string) {
     const result = await removeUser(email);
-    if (!result.ok) alert(result.message);
+    if (!result.ok) showToast(result.message ?? "Something went wrong.", { type: "error" });
+    else if (usesRealAuth) {
+      showToast(
+        "Removed — their access is revoked. Their login credential still technically exists in Supabase; delete it fully from Supabase Dashboard → Authentication → Users if needed.",
+        { type: "info", durationMs: 8000 }
+      );
+    }
   }
 
   return (
@@ -73,6 +85,16 @@ export function UserManagement() {
         >
           {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
         </select>
+        {usesRealAuth && (
+          <input
+            type="text"
+            required
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder="Temporary password (8+ chars)"
+            className="min-w-[200px] bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--accent-border)]"
+          />
+        )}
         <button
           type="submit"
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90"

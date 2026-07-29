@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Plus, LogOut, Sparkles, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight,
-  FileText, Database, Users, Pencil, Trash2, Sun, Moon,
+  FileText, Database, Users, Pencil, Trash2, Sun, Moon, Search, X, Clock,
 } from "lucide-react";
 import type { Department } from "../types";
 import { useAuth } from "../lib/auth";
@@ -14,11 +14,13 @@ interface Props {
   activePageId: string;
   showingDataSources: boolean;
   showingUsers: boolean;
+  showingActivityLog?: boolean;
   theme: Theme;
   onToggleTheme: () => void;
   onSelectPage: (deptId: string, pageId: string) => void;
   onSelectDataSources: () => void;
   onSelectUsers: () => void;
+  onSelectActivityLog?: () => void;
   onAddDepartment: () => void;
   onAddPage: (deptId: string) => void;
   onRenameDepartment: (deptId: string) => void;
@@ -29,14 +31,31 @@ interface Props {
 }
 
 export function Sidebar({
-  departments, activeDeptId, activePageId, showingDataSources, showingUsers, theme, onToggleTheme,
-  onSelectPage, onSelectDataSources, onSelectUsers, onAddDepartment, onAddPage,
+  departments, activeDeptId, activePageId, showingDataSources, showingUsers, showingActivityLog, theme, onToggleTheme,
+  onSelectPage, onSelectDataSources, onSelectUsers, onSelectActivityLog, onAddDepartment, onAddPage,
   onRenameDepartment, onDeleteDepartment, onRenamePage, onDeletePage, onOpenAssistant,
 }: Props) {
   const { user, logout } = useAuth();
   const [expanded, setExpanded] = useState<Set<string>>(new Set([activeDeptId]));
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
+  const [query, setQuery] = useState("");
   const canEditStructure = canManageStructure(user?.role);
+
+  const q = query.trim().toLowerCase();
+  const isSearching = q.length > 0;
+  // While searching, only show teams/pages whose name matches, and
+  // auto-expand every team that has a match so results aren't hidden
+  // behind a collapsed team.
+  const visibleDepartments = isSearching
+    ? departments
+        .map((d) => ({
+          ...d,
+          pages: d.pages.filter((p) => p.name.toLowerCase().includes(q)),
+        }))
+        .filter((d) => d.name.toLowerCase().includes(q) || d.pages.length > 0)
+    : departments;
 
   function toggle(deptId: string) {
     setExpanded((prev) => {
@@ -59,6 +78,9 @@ export function Sidebar({
         <button onClick={onSelectDataSources} title="Data Sources" className="text-[var(--text-dim)] hover:text-[var(--text-h)]"><Database size={17} /></button>
         {canManageUsers(user?.role) && (
           <button onClick={onSelectUsers} title="Manage Users" className="text-[var(--text-dim)] hover:text-[var(--text-h)]"><Users size={17} /></button>
+        )}
+        {canManageStructure(user?.role) && onSelectActivityLog && (
+          <button onClick={onSelectActivityLog} title="Activity Log" className="text-[var(--text-dim)] hover:text-[var(--text-h)]"><Clock size={17} /></button>
         )}
         {canUseAssistant(user?.role) && (
           <button onClick={onOpenAssistant} title="AI Assistant" className="text-[var(--accent)] hover:opacity-80"><Sparkles size={17} /></button>
@@ -83,11 +105,34 @@ export function Sidebar({
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-3 px-2">
-        <p className="px-2 text-xs uppercase tracking-wide text-[var(--text-dim)] mb-2">Teams</p>
+      <div className="px-3 pt-3 pb-1">
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-dim)]" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search teams & pages…"
+            className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-md pl-7 pr-6 py-1.5 text-xs text-[var(--text)] placeholder:text-[var(--text-dim)] focus:outline-none focus:border-[var(--accent-border)]"
+          />
+          {query && (
+            <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-dim)] hover:text-[var(--text-h)]">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      </div>
 
-        {departments.map((dept) => {
-          const isExpanded = expanded.has(dept.id);
+      <nav className="flex-1 overflow-y-auto py-2 px-2">
+        <p className="px-2 text-xs uppercase tracking-wide text-[var(--text-dim)] mb-2">
+          {isSearching ? `Results for "${query}"` : "Teams"}
+        </p>
+
+        {isSearching && visibleDepartments.length === 0 && (
+          <p className="px-2 text-xs text-[var(--text-dim)]">No teams or pages match.</p>
+        )}
+
+        {visibleDepartments.map((dept) => {
+          const isExpanded = isSearching || expanded.has(dept.id);
           return (
             <div key={dept.id} className="mb-0.5 group">
               <div className="flex items-center gap-0.5">
@@ -174,6 +219,18 @@ export function Sidebar({
             }`}
           >
             <Users size={15} /> Manage Users
+          </button>
+        )}
+        {canEditStructure && onSelectActivityLog && (
+          <button
+            onClick={onSelectActivityLog}
+            className={`w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm mb-1 ${
+              showingActivityLog
+                ? "bg-[var(--accent-dim)] text-[var(--text-h)] border border-[var(--accent-border)]"
+                : "text-[var(--text-dim)] hover:bg-[var(--panel-raised)]"
+            }`}
+          >
+            <Clock size={15} /> Activity Log
           </button>
         )}
         {canUseAssistant(user?.role) && (

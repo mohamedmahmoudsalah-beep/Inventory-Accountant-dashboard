@@ -4,6 +4,20 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 ## What's new in this update
 
+**A round of completeness/UX fixes and new features:**
+- **Manager role tightened:** Managers can no longer connect, import, or refresh any data source — only the Admin account does that now. Managers still add/rename/remove teams & pages and edit widgets. See "Roles & permissions" below.
+- **Daily sync instead of hourly:** the background data sync now runs once a day at 3 AM (Admin-only), instead of every hour.
+- **Toast notifications instead of `alert()` popups** for errors and confirmations — small, dismissible, non-blocking.
+- **Undo for delete:** deleting a team or page no longer needs a blocking confirm dialog — it's removed immediately with a 6-second "Undo" toast, and only actually deleted from the shared database if you don't click Undo.
+- **Activity Log:** a new screen (Admins/Managers) showing who created/renamed/deleted teams & pages, connected/refreshed data, and changed user roles — see "Setting up shared storage" for the one extra table it needs.
+- **Sidebar search:** filter teams/pages by name instead of scrolling.
+- **Smart number formatting:** Chart axes/labels, Pivot cells, Matrix cells, and Card values now show compact numbers (1.2K / 3.4M / 2.1B) by default, with a per-widget "Full number" option.
+- **Per-widget filter:** Pivot, Matrix, and Card widgets can each have their own "filter this widget" (pick a column + value), independent of the page's shared filter bar.
+- **Card alerts & period comparison:** a Card can highlight itself red when its value crosses a threshold you set, and/or show "+X% vs last month" using a date column.
+- **Export page to PDF:** a new button next to the existing Excel export, captures the whole page (all widgets) as a downloadable PDF.
+- **Error boundary:** a JS error in one part of the app now shows a clear "something went wrong, reload" screen instead of a blank white page.
+- **Data table now previews 10 rows** instead of 100 (Export still gets every row).
+
 **Fixed the app hanging / showing "no data yet" and a Postgres timeout error during a big sheet refresh.** Refreshing a large sheet writes its rows in many small chunks (see the chunked-storage note above) — but each of those individual writes was also a realtime "something changed" event, and the app was reacting to *every single one* by re-fetching everything from scratch. For a sheet with hundreds of chunks, that meant dozens of overlapping, increasingly heavy reloads firing back to back for the whole duration of the refresh, which is what actually produced the freeze and the `57014 canceling statement due to statement timeout` error — not the save itself. Three changes fix this:
 - The browser doing the writing no longer reloads itself mid-save (it already has the data it just wrote); everyone else's reload is now debounced over a longer window so a whole burst of chunk-writes coalesces into one reload instead of many.
 - Chunks are now written a handful at a time in parallel instead of strictly one at a time, so a big refresh finishes noticeably faster.
@@ -170,11 +184,24 @@ To make it real and shared across your whole team (free, ~10 minutes):
      created_at timestamptz default now()
    );
 
+   -- Audit trail: "who did what, when" for the Activity Log screen (team/page
+   -- create-rename-delete, connecting/refreshing data, user management).
+   -- Writes to this table are best-effort/fire-and-forget from the app, so a
+   -- missing table or a failed insert never blocks the actual action.
+   create table activity_log (
+     id uuid primary key default gen_random_uuid(),
+     actor_email text not null,
+     action text not null,
+     details text,
+     created_at timestamptz default now()
+   );
+
    alter table teams enable row level security;
    alter table pages enable row level security;
    alter table widgets enable row level security;
    alter table page_row_chunks enable row level security;
    alter table app_users enable row level security;
+   alter table activity_log enable row level security;
 
    -- This app authenticates with its own email allow-list rather than
    -- Supabase Auth, so these policies simply allow the anon key full
@@ -187,6 +214,7 @@ To make it real and shared across your whole team (free, ~10 minutes):
    create policy "anon full access" on widgets for all using (true) with check (true);
    create policy "anon full access" on page_row_chunks for all using (true) with check (true);
    create policy "anon full access" on app_users for all using (true) with check (true);
+   create policy "anon full access" on activity_log for all using (true) with check (true);
 
    alter publication supabase_realtime add table teams;
    alter publication supabase_realtime add table pages;
@@ -233,6 +261,22 @@ To make it real and shared across your whole team (free, ~10 minutes):
 
    **Why rows are chunked instead of one `pages.rows` column:** a single write request has to fit under Supabase's request-size limits. A sheet with a few hundred rows fits fine as one blob — a sheet with 100,000+ rows might not, and when a write like that silently fails, the browser that fetched the data still shows it fine (it's already sitting in that tab's memory), while Supabase itself never actually got the update. Every *other* device just keeps reading whatever smaller/older dataset was last written successfully — which looks exactly like "big sheets don't show data for anyone but me, and even I don't see the newest fetch after a reload." Splitting the data into many small chunks means no single request ever has to carry more than a few thousand rows, no matter how big the whole sheet is.
 
+   **Already have `teams`/`pages`/`widgets`/`page_row_chunks` set up and just need the Activity Log table?** Run only this:
+
+   ```sql
+   create table if not exists activity_log (
+     id uuid primary key default gen_random_uuid(),
+     actor_email text not null,
+     action text not null,
+     details text,
+     created_at timestamptz default now()
+   );
+   alter table activity_log enable row level security;
+   create policy "anon full access" on activity_log for all using (true) with check (true);
+   ```
+
+   The Activity Log screen (visible to Admins and Managers) will show a friendly "no activity yet" message until this table exists — nothing else in the app depends on it, so there's no rush.
+
 
 **Upgrading from an older version of this project?** That version used a single `app_state` table holding everything as one JSON blob. This version replaces it with the `teams`/`pages`/`widgets` tables above — run the SQL above to create them (your old `app_state` table can just be dropped, or left alone and ignored: `drop table if exists app_state;`).
 
@@ -265,9 +309,30 @@ This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refr
    (`SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` are server-only — never put them in `.env`/`VITE_...` variables, since anything prefixed `VITE_` ships to the browser.)
 4. Redeploy. `vercel.json` already registers the cron schedule.
 
-**Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 3 * * *` (once daily, ~3am UTC) to match that. If you're on Vercel Pro, you can change it to `0 * * * *` for a real hourly refresh.
+**Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 12 * * *` (once daily, ~noon UTC) to match that. If you're on Vercel Pro, you can change it to `0 * * * *` for a real hourly refresh.
 
 **Limitation, mostly optional to lift:** by default this only refreshes sheets connected via a public "Anyone with the link can view" link. If your "Browse from Drive" sheets are all tied to one fixed account anyway (this app already locks Drive access to a single allowed email), you can also enable refreshing those — see the long comment block at the top of `api/cron-refresh-sheets.example.js` ("Optional: also refreshing private Drive sheets") and the one-time helper script at `scripts/get-google-refresh-token.example.js`. It's a ~5 minute one-time setup (authorize once, get a refresh token, add it to Vercel's env vars) and after that the cron refreshes private Drive sheets too, with nobody needing to be signed in anywhere.
+
+## Daily email report (optional)
+
+A daily email digest of every Card widget's value ("WH stock valuation: 1.28B", etc.), grouped by team/page — for people who want the headline numbers without opening the dashboard.
+
+**Why an HTML email instead of literally emailing the PDF:** turning a live dashboard into a pixel-perfect PDF needs a real browser (headless Chromium) rendering React + charts, which is heavy to run in a Vercel serverless function on the free tier. A plain HTML table of "every Card's current number" covers the same daily need without that infrastructure. The **Export page to PDF** button in the app itself is still there any time someone wants the exact visual page.
+
+This uses [Resend](https://resend.com) to actually send the email — free tier is 3,000 emails/month and 100/day with no credit card, which comfortably covers one email a day to a small team.
+
+1. Sign up at [resend.com](https://resend.com) (free). You can start sending immediately from their shared `onboarding@resend.dev` address to your own verified email, or verify your own domain (Resend dashboard → Domains → add a few DNS records at your registrar) to send from e.g. `reports@yourcompany.com` to anyone.
+2. Resend dashboard → **API Keys** → Create API Key, copy it.
+3. Rename `api/cron-daily-report.example.js` to `api/cron-daily-report.js`.
+4. In Vercel's Environment Variables, add (alongside the ones from the section above):
+   ```
+   RESEND_API_KEY=your-resend-api-key
+   REPORT_FROM_EMAIL=onboarding@resend.dev
+   REPORT_RECIPIENTS=mohamed.mahmoudsalah@breadfast.com,manager@breadfast.com
+   ```
+5. Redeploy. `vercel.json` already registers this cron for `0 6 * * *` (once daily, ~6am UTC — before the data refresh at noon UTC, so adjust the two times if you want the report to reflect that day's *freshest* refresh instead).
+
+**Free "Hobby" plan limit:** Vercel's free tier allows a small number of cron jobs (2, at the time of writing) as long as each fires at most once a day — this report and the data-refresh cron above together fit within that. If you ever need a third daily cron, you'd need Vercel Pro.
 
 ## Keeping Supabase from pausing (optional, fixes the "opens empty, works a moment later" pattern)
 
@@ -361,13 +426,89 @@ To enable it on Vercel:
 - Check **Vercel → your project → Deployments → (latest) → Functions/Logs** for the actual error message from `api/assistant.js` — it's usually more specific than what shows in the chat panel.
 - Make sure the `model` value in `api/assistant.js` is a real, current model name (check [docs.claude.com](https://docs.claude.com) for the current list) — an outdated or mistyped model name will make every request fail with a 400 error.
 
-## Making it production-ready
+## Real authentication & Row Level Security (implemented)
 
-Two things are intentionally simple so you could ship the UI fast:
+The app now uses real **Supabase Auth** (email + password) instead of the old client-side email allow-list, and the database enforces roles itself via **Row Level Security** — not just the UI hiding buttons. This only applies once Supabase is configured (see "Setting up shared storage" above); without Supabase, the app still falls back to the old email-only allow-list for a quick local trial.
 
-**1. Real authentication.** `src/lib/auth.tsx` checks emails against a list hard-coded in the frontend — visible to anyone reading the JS bundle, with no password/identity check. Before sharing this outside your own team, swap it for [Supabase Auth](https://supabase.com/auth) (Google sign-in + a `profiles` table with each user's role) or another provider (Auth0, Clerk, Firebase Auth).
+**What changed, concretely:**
+- Signing in now checks a real password against Supabase Auth (`supabase.auth.signInWithPassword`), not just "is this email on a list."
+- A person's role still lives in `app_users` (looked up by email) — but now every table's Postgres policies check that role directly (via a `my_role()` function keyed off the signed-in session), so the *database* refuses an unauthorized write even if someone bypassed the app's UI entirely (browser devtools, a raw API call, etc.). Under the old "anon full access" policies, the anon key alone had full read/write on every table, signed in or not.
+- Removing someone in **Manage Users** immediately revokes their access at the database level (no matching `app_users` row = every policy below blocks them), not just from the interface.
 
-**2. Enforcing roles server-side.** "Admin vs viewer" currently only hides buttons in the UI. Pair real auth with a real backend (Supabase Postgres + Row Level Security, or your own API) so permissions are enforced server-side, not just in the interface.
+**One-time setup (run this after the SQL in "Setting up shared storage" above):**
+
+```sql
+-- 1. A security-definer function that looks up the CALLER's own role via
+--    their signed-in email — SECURITY DEFINER lets it read app_users
+--    internally regardless of that table's own restrictive policy below,
+--    while still only ever returning the caller's own row.
+create or replace function public.my_role()
+returns text
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select role from app_users where email = auth.jwt() ->> 'email' limit 1;
+$$;
+
+grant execute on function public.my_role() to authenticated;
+
+-- 2. Drop the old blanket-access policies from "Setting up shared storage" —
+--    those let anyone with the anon key read/write everything, signed in or
+--    not. The policies below replace them with real role checks.
+drop policy if exists "anon full access" on teams;
+drop policy if exists "anon full access" on pages;
+drop policy if exists "anon full access" on widgets;
+drop policy if exists "anon full access" on page_row_chunks;
+drop policy if exists "anon full access" on app_users;
+drop policy if exists "anon full access" on activity_log;
+
+-- 3. Real policies. Anyone with an assigned role can view teams/pages/
+--    widgets/data; only Admins & Managers can create/rename/delete
+--    structure or edit widgets (matches canManageStructure/canEditWidgets
+--    in src/lib/permissions.ts); only Admins touch data sources
+--    (canManageDataSources); only Admins manage the user list.
+create policy "read for any signed-in role" on teams for select using (public.my_role() is not null);
+create policy "write for admin/manager" on teams for insert with check (public.my_role() in ('admin','manager'));
+create policy "update for admin/manager" on teams for update using (public.my_role() in ('admin','manager')) with check (public.my_role() in ('admin','manager'));
+create policy "delete for admin/manager" on teams for delete using (public.my_role() in ('admin','manager'));
+
+create policy "read for any signed-in role" on pages for select using (public.my_role() is not null);
+create policy "write for admin/manager" on pages for insert with check (public.my_role() in ('admin','manager'));
+create policy "update for admin/manager" on pages for update using (public.my_role() in ('admin','manager')) with check (public.my_role() in ('admin','manager'));
+create policy "delete for admin/manager" on pages for delete using (public.my_role() in ('admin','manager'));
+
+create policy "read for any signed-in role" on widgets for select using (public.my_role() is not null);
+create policy "write for admin/manager" on widgets for insert with check (public.my_role() in ('admin','manager'));
+create policy "update for admin/manager" on widgets for update using (public.my_role() in ('admin','manager')) with check (public.my_role() in ('admin','manager'));
+create policy "delete for admin/manager" on widgets for delete using (public.my_role() in ('admin','manager'));
+
+create policy "read for any signed-in role" on page_row_chunks for select using (public.my_role() is not null);
+create policy "write for admin" on page_row_chunks for insert with check (public.my_role() = 'admin');
+create policy "update for admin" on page_row_chunks for update using (public.my_role() = 'admin') with check (public.my_role() = 'admin');
+create policy "delete for admin" on page_row_chunks for delete using (public.my_role() = 'admin');
+
+create policy "admin full access" on app_users for all using (public.my_role() = 'admin') with check (public.my_role() = 'admin');
+
+create policy "insert for any signed-in role" on activity_log for insert with check (public.my_role() is not null);
+create policy "read for admin/manager" on activity_log for select using (public.my_role() in ('admin','manager'));
+```
+
+**Bootstrapping the very first Admin account** (chicken-and-egg: `app_users` inserts now require already being an Admin, so the first one has to be created directly, not through the app):
+
+1. Supabase Dashboard → **Authentication → Users → Add user**. Set the email to `mohamed.mahmoudsalah@breadfast.com` and a real password. Leave "Auto Confirm User" checked (or see the email-confirmation note below).
+2. Back in the **SQL Editor**, run:
+   ```sql
+   insert into app_users (email, role) values ('mohamed.mahmoudsalah@breadfast.com', 'admin')
+   on conflict (email) do update set role = 'admin';
+   ```
+   (Running this in the SQL Editor executes as the Postgres superuser, so it isn't subject to the RLS policies above — this is the one and only manual bootstrap step.)
+3. Sign in to the app with that email/password. From there, use **Manage Users** to add everyone else — the app handles both the Supabase Auth account and the `app_users` role together.
+
+**About email confirmation:** Supabase's Email provider (Authentication → Providers → Email) has a "Confirm email" toggle. For a small internal tool without transactional email set up, turning it **off** means an account works with its password immediately — no confirmation link to click. Leave it **on** for extra safety if you'd rather every new account confirm via email first (needs Supabase's built-in email sending or your own SMTP configured under Authentication → Settings).
+
+**Known limitation:** removing someone in Manage Users deletes their `app_users` row (which the RLS policies above key everything off, so their access is fully cut immediately) but does **not** delete their underlying Supabase Auth login credential — that requires the `service_role` key, which the browser never has access to for good reason. To fully delete the account too: Supabase Dashboard → Authentication → Users → find them → Delete. A server-side admin API route (using the service key, never shipped to the browser) would be the way to fold that into the app itself later.
 
 Everything else — Drive/Sheets connection, charts, filters, tables, Excel export, and the assistant proxy pattern — is production-ready as-is.
 

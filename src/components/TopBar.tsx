@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma, CloudUpload, Check } from "lucide-react";
+import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma, CloudUpload, Check, FileDown } from "lucide-react";
 import type { DataRow, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
-import { canManageDataSources, canConnectNewData } from "../lib/permissions";
+import { canManageDataSources, canConnectNewData, canExport } from "../lib/permissions";
+import { showToast } from "../lib/toast";
 import {
   pickGoogleSheet,
   pickGoogleSheets,
@@ -29,11 +30,13 @@ interface Props {
   /** Set while that save is actually in progress; null the rest of the time. */
   saveProgress: { done: number; total: number } | null;
   onSaveNow: () => void;
+  onExportPdf: () => void;
+  exportingPdf: boolean;
 }
 
 export function TopBar({
   page, refreshing, onRefresh, onConnectSheet, onImportData, onOpenDataModel,
-  hasPendingSave, saveProgress, onSaveNow,
+  hasPendingSave, saveProgress, onSaveNow, onExportPdf, exportingPdf,
 }: Props) {
   const { user } = useAuth();
   const [showConnect, setShowConnect] = useState(false);
@@ -48,18 +51,20 @@ export function TopBar({
     const msg = e instanceof Error ? e.message : "";
     if (msg.startsWith("WRONG_ACCOUNT:")) {
       const wrongEmail = msg.split(":")[1];
-      alert(
-        `This Drive connection is limited to mohamed.mahmoudsalah@breadfast.com.\nYou signed in as ${wrongEmail}. Please try again and pick the right account.`
+      showToast(
+        `This Drive connection is limited to mohamed.mahmoudsalah@breadfast.com. You signed in as ${wrongEmail}. Please try again and pick the right account.`,
+        { type: "error", durationMs: 8000 }
       );
     } else {
-      alert(msg || fallback);
+      showToast(msg || fallback, { type: "error" });
     }
   }
 
   async function handleBrowseDrive() {
     if (!isGoogleDriveConfigured()) {
-      alert(
-        "Google Drive isn't connected yet. An admin needs to add VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY — see README.md 'Setting up real Google Drive access'."
+      showToast(
+        "Google Drive isn't connected yet. An admin needs to add VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY — see README.md 'Setting up real Google Drive access'.",
+        { type: "error", durationMs: 7000 }
       );
       return;
     }
@@ -94,8 +99,9 @@ export function TopBar({
 
   async function handleCombineSheets() {
     if (!isGoogleDriveConfigured()) {
-      alert(
-        "Google Drive isn't connected yet. An admin needs to add VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY — see README.md 'Setting up real Google Drive access'."
+      showToast(
+        "Google Drive isn't connected yet. An admin needs to add VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY — see README.md 'Setting up real Google Drive access'.",
+        { type: "error", durationMs: 7000 }
       );
       return;
     }
@@ -172,6 +178,17 @@ export function TopBar({
                 <Sigma size={14} /> Data model
               </button>
             </>
+          )}
+          {canExport(user?.role) && (
+            <button
+              onClick={onExportPdf}
+              disabled={exportingPdf}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text)] hover:bg-[var(--panel-raised)] disabled:opacity-50"
+              title="Export everything on this page as a PDF"
+            >
+              {exportingPdf ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+              Export page to PDF
+            </button>
           )}
           {canRefresh && (
             <button

@@ -116,3 +116,20 @@ The app is fully functional and deployed. The last few rounds of work fixed seve
 - **Number formatting:** Chart axes/value labels, Pivot cells, Matrix cells, and the Card's big number now abbreviate large values (e.g. 1,276,683,943 → 1.28B) by default. Every Chart/Pivot/Matrix/Card has a per-widget setting to switch to "Full number" instead.
 - **Per-widget filter:** Pivot, Matrix, and Card widgets each got their own "Filter this widget" control (pick a column + value) — independent of the page's shared filter bar, so one widget can show a narrower slice without affecting the rest of the page.
 - **Data table now shows the first 10 rows** (was 100) — Export still gets every row regardless.
+
+## Follow-up session (this delivery)
+
+- **Toasts instead of `alert()`**, everywhere in the app.
+- **Undo-able delete** for teams/pages (6-second window, soft local removal + delayed remote delete) instead of a blocking `confirm()`.
+- **Activity Log** screen (Admin/Manager) backed by a new `activity_log` Supabase table — logs team/page create-rename-delete, data connect/refresh, and user management.
+- **Sidebar search** across teams/pages.
+- **Error boundary** at the app root — a render error now shows a "reload" screen instead of a blank white page.
+- **Card widget:** optional alert threshold (highlights red) and optional "vs last month" comparison (needs a date column).
+- **Export page to PDF** (all widgets on the current page, via html2canvas + jsPDF), next to the existing per-widget Excel export.
+- **Sidebar auto-collapses on narrow (mobile-width) screens** on load — a first step toward better small-screen support, not a full responsive redesign.
+
+## Deliberately not done yet (flagged, not forgotten)
+
+- **Real authentication + Row Level Security.** The app still gates access with a plain email allow-list (no password) and Supabase's anon key has full read/write on every table. This is fine for a small trusted internal team but is a real security gap the moment the tool is shared more widely. Moving to real Supabase Auth + per-row policies is a breaking change to the login flow and needs a decision, not a silent swap.
+- **Scheduled email reports.** Needs an email-sending service (e.g. Resend, SendGrid) and an API key — no such service is wired up yet.
+- **Free-form (drag-anywhere) widget canvas.** Widgets still live in a wrapping grid (resize works, arbitrary x/y placement doesn't) — a genuine Power-BI-style free canvas is a bigger layout-engine change, deferred for a future round given the scope already covered here.

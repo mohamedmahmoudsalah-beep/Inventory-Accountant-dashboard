@@ -103,6 +103,13 @@ export interface CardConfig {
   layout?: WidgetLayout;
   numberFormat?: NumberFormatMode;
   filter?: WidgetFilter;
+  /** Highlights the card red/green when its value crosses a threshold —
+   *  e.g. "alert if stock valuation drops below 50,000,000". */
+  alertThreshold?: { direction: "below" | "above"; value: number };
+  /** Shows this month's value vs the previous month's, using `compareDateColumn`
+   *  to bucket rows by month (same aggregation as the main value). */
+  compareEnabled?: boolean;
+  compareDateColumn?: string;
 }
 
 export interface TextConfig {
