@@ -33,7 +33,7 @@ import {
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
 import { getStoredTheme, applyTheme, type Theme } from "./lib/theme";
-import { showToast } from "./lib/toast";
+import { showToast, dismissToast } from "./lib/toast";
 import { exportElementToPdf } from "./lib/pdfExport";
 import type {
   CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig,
@@ -399,10 +399,21 @@ function DashboardApp() {
   // writing. Admin-only (canManageDataSources is admin-only) — Managers don't
   // touch data sources at all anymore, so this never runs for them even if
   // their tab happens to be open at 3 AM.
+  //
+  // This is a SAFETY NET on top of the server-side cron (see README's
+  // "Setting up server-side data refresh") — that cron is the real fix for
+  // "data updates even if nobody's browser is open." This client-side path
+  // additionally covers: (a) the cron not being set up yet, and (b) showing
+  // the Admin a visible "syncing" indicator when they log in to data that's
+  // gone stale, rather than silently showing old numbers with no sign
+  // anything is happening.
   useEffect(() => {
     if (!canManageDataSources(user?.role)) return;
 
-    async function syncAllSheetsNow() {
+    async function syncAllSheetsNow(showToastFeedback: boolean) {
+      const toastId = showToastFeedback
+        ? showToast("Syncing the latest data in the background…", { type: "info", durationMs: 60000 })
+        : null;
       let current = departments;
       for (const dept of current) {
         for (const page of dept.pages) {
@@ -415,13 +426,17 @@ function DashboardApp() {
             current = current.map((d) =>
               d.id !== dept.id ? d : { ...d, pages: d.pages.map((p) => (p.id !== page.id ? p : updatedPage)) }
             );
+            setDepartments(current); // update (and let the next page save) one at a time, not all-or-nothing at the end
             syncPage(updatedPage, dept.id, true);
           } catch (e) {
-            console.warn(`Hourly sync: couldn't refresh "${page.name}" (not shown to the person):`, e);
+            console.warn(`Background sync: couldn't refresh "${page.name}" (not shown to the person):`, e);
           }
         }
       }
-      setDepartments(current);
+      if (toastId) {
+        dismissToast(toastId);
+        showToast("Data synced.", { type: "success", durationMs: 3000 });
+      }
     }
 
     function msUntilNext3AM() {
@@ -433,10 +448,23 @@ function DashboardApp() {
     }
 
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const STALE_AFTER_MS = 20 * 60 * 60 * 1000; // ~20h — a bit under a day, so a missed 3 AM run still gets caught same day
+
+    // On login/mount: if the server cron (or yesterday's 3 AM run) never
+    // happened — no browser was open, the cron isn't set up yet, etc. —
+    // don't just silently show stale numbers. Sync right now instead, with
+    // a visible indicator, so the Admin never has to remember to click
+    // Refresh on every page by hand.
+    const connectedPages = departments.flatMap((d) => d.pages).filter((p) => p.sheetUrl);
+    const isStale = connectedPages.some((p) => !p.lastUpdated || Date.now() - new Date(p.lastUpdated).getTime() > STALE_AFTER_MS);
+    if (connectedPages.length > 0 && isStale) {
+      syncAllSheetsNow(true);
+    }
+
     const timeoutId = setTimeout(function runAndReschedule() {
-      syncAllSheetsNow();
+      syncAllSheetsNow(false);
     }, msUntilNext3AM());
-    const intervalId = setInterval(syncAllSheetsNow, ONE_DAY_MS);
+    const intervalId = setInterval(() => syncAllSheetsNow(false), ONE_DAY_MS);
 
     return () => {
       clearTimeout(timeoutId);

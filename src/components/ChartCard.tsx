@@ -286,10 +286,31 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
               <Radar dataKey={config.yKey} stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.4} />
             </RadarChart>
           ) : config.type === "treemap" ? (
-            <Treemap data={treemapData} dataKey="size" stroke="var(--panel)" fill="var(--accent)">
-              {treemapData.map((_, i) => (
-                <Cell key={i} fill={COLORS[i % COLORS.length]} />
-              ))}
+            <Treemap data={treemapData} dataKey="size" stroke="var(--panel)" fill="var(--accent)"
+              content={(props: any) => {
+                const total = treemapData.reduce((s, d) => s + d.size, 0);
+                const percent = total > 0 ? (props.size / total) * 100 : 0;
+                const showText = props.width > 46 && props.height > 26;
+                return (
+                  <g>
+                    <rect
+                      x={props.x} y={props.y} width={props.width} height={props.height}
+                      fill={COLORS[props.index % COLORS.length]} stroke="var(--panel)"
+                    />
+                    {showText && (
+                      <text x={props.x + 6} y={props.y + 16} fontSize={11} fontWeight={600} fill="#fff">
+                        {props.name}
+                      </text>
+                    )}
+                    {showText && (
+                      <text x={props.x + 6} y={props.y + 30} fontSize={10} fill="#ffffffd0">
+                        {percent.toFixed(0)}%
+                      </text>
+                    )}
+                  </g>
+                );
+              }}
+            >
               <Tooltip contentStyle={tooltipStyle} />
             </Treemap>
           ) : (
@@ -301,7 +322,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
                 dataKey={config.yKey}
                 nameKey={config.xKey}
                 outerRadius={80}
-                label={(props: { name?: string }) => props.name ?? ""}
+                label={(props: any) => `${props.name} ${((props.percent ?? 0) * 100).toFixed(0)}%`}
                 cursor={onCrossFilter ? "pointer" : undefined}
                 onClick={(data: { name?: string }) => data.name && onCrossFilter?.(config.xKey, data.name)}
               >

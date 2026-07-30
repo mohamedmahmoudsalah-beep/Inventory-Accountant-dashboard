@@ -5,6 +5,12 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 ## What's new in this update
 
 **Latest round:**
+- **Measure formulas now support explicit aggregate functions** — `SUM([Column])`, `COUNT([Column])`, `AVG(...)`, `MIN(...)`, `MAX(...)`, `DISTINCT(...)` — not just implicit sum. Autocomplete suggests these alongside measures/columns.
+- **Pie charts show each slice's percentage directly on the chart**, not just on hover.
+- **Treemap cells show their name and share-of-total percentage directly on the cell**, not just on hover.
+- **A safety-net sync on login:** if a connected sheet's data is more than ~20 hours old (the server cron isn't set up yet, or a browser wasn't open at 3 AM), the app now syncs it automatically in the background as soon as the Admin logs in — with a visible "Syncing…" notification — instead of silently showing stale numbers until someone remembers to click Refresh.
+
+**Latest round:**
 - **Card widget settings are now hidden behind a gear icon** (like Pivot/Matrix already were) instead of always showing.
 - **Fixed a timezone bug in the date-range filter** that silently dropped the first day of a range (e.g. "Jul 1 → Jul 31" was actually starting from Jul 2).
 - **"Filter this widget" now supports number comparisons** (greater than / less than / between) when the chosen column is numeric, not just an exact-match dropdown.

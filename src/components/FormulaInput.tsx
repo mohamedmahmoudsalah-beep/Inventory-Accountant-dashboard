@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 
 interface Suggestion {
   name: string;
-  kind: "measure" | "column";
+  kind: "measure" | "column" | "function";
 }
 
 interface Props {
@@ -46,18 +46,34 @@ export function FormulaInput({ value, onChange, suggestions, placeholder, classN
     return suggestions.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 8);
   }, [query, suggestions]);
 
-  function insert(name: string) {
+  function insert(suggestion: Suggestion) {
     const cursor = inputRef.current?.selectionStart ?? value.length;
     const before = value.slice(0, queryStart);
     const after = value.slice(cursor);
+
+    if (suggestion.kind === "function") {
+      // Functions insert as "SUM(" with the cursor left right after the "(" —
+      // ready to type "[" and get column suggestions for what to aggregate,
+      // then close the paren themselves.
+      const next = `${before}${suggestion.name}(${after}`;
+      onChange(next);
+      setHighlighted(0);
+      requestAnimationFrame(() => {
+        const pos = before.length + suggestion.name.length + 1;
+        inputRef.current?.focus();
+        inputRef.current?.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+
     // Consume a trailing "]" too if the user had already typed one (so we
     // don't end up with a stray extra bracket after inserting).
     const afterTrimmed = after.startsWith("]") ? after.slice(1) : after;
-    const next = `${before}[${name}]${afterTrimmed}`;
+    const next = `${before}[${suggestion.name}]${afterTrimmed}`;
     onChange(next);
     setHighlighted(0);
     requestAnimationFrame(() => {
-      const pos = before.length + name.length + 2;
+      const pos = before.length + suggestion.name.length + 2;
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(pos, pos);
     });
@@ -75,7 +91,7 @@ export function FormulaInput({ value, onChange, suggestions, placeholder, classN
           if (matches.length === 0) return;
           if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted((h) => (h + 1) % matches.length); }
           else if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted((h) => (h - 1 + matches.length) % matches.length); }
-          else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insert(matches[highlighted].name); }
+          else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insert(matches[highlighted]); }
           else if (e.key === "Escape") { setFocused(false); }
         }}
         placeholder={placeholder}
@@ -86,14 +102,14 @@ export function FormulaInput({ value, onChange, suggestions, placeholder, classN
           {matches.map((m, i) => (
             <button
               key={`${m.kind}-${m.name}`}
-              onMouseDown={(e) => { e.preventDefault(); insert(m.name); }}
+              onMouseDown={(e) => { e.preventDefault(); insert(m); }}
               className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center justify-between gap-2 ${
                 i === highlighted ? "bg-[var(--accent-dim)] text-[var(--text-h)]" : "text-[var(--text)] hover:bg-[var(--panel-raised)]"
               }`}
             >
               <span className="truncate">{m.name}</span>
               <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-dim)]">
-                {m.kind === "measure" ? "★ measure" : "column"}
+                {m.kind === "measure" ? "★ measure" : m.kind === "function" ? "ƒ function" : "column"}
               </span>
             </button>
           ))}

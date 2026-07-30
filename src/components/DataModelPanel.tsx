@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Plus, Trash2, Sparkles } from "lucide-react";
 import type { CalculatedColumn, Measure, PivotAgg } from "../types";
 import { FormulaInput } from "./FormulaInput";
+import { MEASURE_FORMULA_FUNCTIONS } from "../lib/measures";
 
 interface Props {
   columns: string[];
@@ -212,15 +213,16 @@ export function DataModelPanel({
                           value={m.formula}
                           onChange={(formula) => updateMeasure(i, { formula })}
                           suggestions={[
+                            ...MEASURE_FORMULA_FUNCTIONS.map((f) => ({ name: f, kind: "function" as const })),
                             ...measures.filter((mm) => mm.id !== m.id).map((mm) => ({ name: mm.name, kind: "measure" as const })),
                             ...columns.map((c) => ({ name: c, kind: "column" as const })),
                           ]}
-                          placeholder="e.g. [Total Revenue] / [Total Cost] * 100"
+                          placeholder="e.g. SUM([Revenue]) / COUNT([Orders]), or [Total Revenue] / [Total Cost] * 100"
                           className="w-full bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)] font-mono"
                         />
                       </div>
                       <p className="text-[var(--text-dim)] mt-1.5">
-                        Type a letter to see matching measures/columns and click one to insert it. <code className="text-[var(--text)]">[Measure Name]</code> uses that measure's value; <code className="text-[var(--text)]">[Column Name]</code> means sum of that column. Use +, -, *, /.
+                        Type a letter to see matching functions, measures, or columns and click one to insert it. <code className="text-[var(--text)]">SUM([Column])</code>/<code className="text-[var(--text)]">COUNT(...)</code>/<code className="text-[var(--text)]">AVG(...)</code>/<code className="text-[var(--text)]">MIN(...)</code>/<code className="text-[var(--text)]">MAX(...)</code>/<code className="text-[var(--text)]">DISTINCT(...)</code> aggregate a column explicitly; a bare <code className="text-[var(--text)]">[Column Name]</code> means sum by default. <code className="text-[var(--text)]">[Measure Name]</code> uses that measure's own value. Use +, -, *, /.
                       </p>
                     </div>
                   ) : (
