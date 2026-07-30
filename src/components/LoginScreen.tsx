@@ -20,72 +20,81 @@ export function LoginScreen() {
 
   return (
     <div className="min-h-svh relative flex items-center justify-center bg-[var(--bg)] px-4 overflow-hidden">
-      {/* Subtle brand watermark — the real logo, large and very low-opacity,
-          purely decorative (no pointer events) so it never competes with the
-          actual sign-in form. */}
-      <img
-        src="/breadfast-logo-magenta.png"
-        alt=""
-        aria-hidden="true"
-        className="pointer-events-none select-none absolute -right-24 -bottom-24 w-[32rem] h-[32rem] object-contain opacity-[0.06] rotate-[-8deg]"
+      {/* Two soft blurred color blobs — Concept C's "Daylight" signature.
+          Deliberately faint in dark mode (via [data-theme="dark"] in
+          index.css cascading through --accent-dim/--mint-dim) so this reads
+          calm there instead of muddy. */}
+      <div
+        className="pointer-events-none absolute -top-36 -left-28 w-[420px] h-[420px] rounded-full blur-3xl opacity-[0.55]"
+        style={{ background: "var(--accent-dim)" }}
       />
       <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(900px 500px at 15% -10%, var(--accent-dim), transparent), radial-gradient(700px 450px at 100% 110%, var(--mint-dim), transparent)",
-        }}
+        className="pointer-events-none absolute -bottom-36 -right-24 w-[360px] h-[360px] rounded-full blur-3xl opacity-[0.55]"
+        style={{ background: "var(--mint-dim)" }}
       />
 
-      <div className="w-full max-w-sm relative">
-        <div className="flex items-center gap-2.5 mb-8 justify-center">
-          <div className="w-11 h-11 rounded-xl overflow-hidden">
-            <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
-          </div>
-          <span className="text-lg font-semibold text-[var(--text-h)] text-center">General Report Inventory Accountant team</span>
-        </div>
-
+      <div className="w-full max-w-sm relative z-10">
         <form
           onSubmit={handleSubmit}
-          className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-6 shadow-[0_8px_30px_rgba(0,0,0,0.25)]"
+          className="bg-[var(--panel)] border border-[var(--border)] rounded-3xl px-9 pt-11 pb-8 text-center shadow-[0_30px_70px_-30px_rgba(30,20,25,0.25)]"
         >
-          <h2 className="text-base mb-1">Sign in</h2>
-          <p className="text-sm text-[var(--text-dim)] mb-5">
-            {usesRealAuth
-              ? "Sign in with the email and password an Admin set up for you."
-              : "Enter the email your admin added to the allow-list."}
-          </p>
-          <input
-            type="email"
-            required
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
-            className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent-border)] mb-3"
-          />
-          {usesRealAuth && (
+          <div
+            className="w-14 h-14 rounded-2xl mx-auto mb-5 flex items-center justify-center text-white font-bold text-xl display"
+            style={{
+              background: "linear-gradient(155deg, var(--accent), var(--accent-2))",
+              boxShadow: "0 14px 28px -12px var(--accent-border)",
+            }}
+          >
+            GR
+          </div>
+          <h1 className="display text-2xl font-semibold text-[var(--text-h)] tracking-tight">General Report</h1>
+          <p className="text-sm text-[var(--text-dim)] mt-1.5 mb-7">Inventory Accountant Team</p>
+
+          <div className="text-left mb-3.5">
+            <label className="block text-xs font-semibold text-[var(--text-dim)] mb-1.5">Email</label>
             <input
-              type="password"
+              type="email"
               required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent-border)] mb-3"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-xl px-3.5 py-2.5 text-sm text-[var(--text-h)] outline-none focus:border-[var(--accent)] transition-colors"
             />
+          </div>
+
+          {usesRealAuth && (
+            <div className="text-left mb-3.5">
+              <label className="block text-xs font-semibold text-[var(--text-dim)] mb-1.5">Password</label>
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-xl px-3.5 py-2.5 text-sm text-[var(--text-h)] outline-none focus:border-[var(--accent)] transition-colors"
+              />
+            </div>
           )}
-          {error && (
-            <p className="text-sm text-[var(--bad)] mb-3">{error}</p>
-          )}
+
+          {error && <p className="text-sm text-[var(--bad)] mb-3.5 text-left">{error}</p>}
+
           <button
             type="submit"
             disabled={submitting}
-            className="w-full flex items-center justify-center gap-2 bg-[var(--accent)] text-white font-medium rounded-lg py-2 text-sm hover:opacity-90 transition disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white mt-1 disabled:opacity-60 transition"
+            style={{ background: "var(--accent)", boxShadow: "0 14px 26px -12px var(--accent-border)" }}
           >
             {submitting && <Loader2 size={15} className="animate-spin" />}
-            Continue
+            Sign in
           </button>
+
+          <p className="text-xs text-[var(--text-dim)] mt-5">
+            {usesRealAuth
+              ? "Ask an Admin if you don't have an account yet."
+              : "Enter the email your admin added to the allow-list."}
+          </p>
         </form>
       </div>
     </div>

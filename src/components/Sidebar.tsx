@@ -99,7 +99,7 @@ export function Sidebar({
         <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0">
           <img src="/breadfast-logo-magenta.png" alt="Breadfast" className="w-full h-full object-cover" />
         </div>
-        <span className="text-sm font-semibold text-[var(--text-h)] truncate flex-1">General Report Inventory Accountant team</span>
+        <span className="display text-sm font-semibold text-[var(--text-h)] truncate flex-1">General Report Inventory Accountant team</span>
         <button onClick={() => setCollapsed(true)} title="Collapse sidebar" className="text-[var(--text-dim)] hover:text-[var(--text-h)] shrink-0">
           <ChevronsLeft size={16} />
         </button>

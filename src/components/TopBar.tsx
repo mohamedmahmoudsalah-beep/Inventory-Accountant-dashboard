@@ -130,7 +130,7 @@ export function TopBar({
     <div className="border-b border-[var(--border)] px-6 py-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-lg">{page.name}</h1>
+          <h1 className="display text-lg">{page.name}</h1>
           <p className="text-xs text-[var(--text-dim)] mt-0.5">
             {hasPendingSave
               ? "Fetched — not saved to the shared database yet. Click \"Save to shared database\" below when you're ready."

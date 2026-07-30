@@ -23,8 +23,9 @@
   --bad: #e37b64;
   --info: #85acec;
 
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --sans: "Plus Jakarta Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --display: "Fraunces", "Source Serif 4", Georgia, serif;
 
   color-scheme: dark;
   color: var(--text);
@@ -35,25 +36,29 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Light mode ("Daylight"): bright, warm, friendly — NOT a re-tint of the
+   dark theme's colors, a deliberately different palette. Dark mode above
+   (:root, the default) is untouched — it's the theme already in production
+   and stays exactly as-is regardless of this. */
 [data-theme="light"] {
-  --bg: #f3eef2;
-  --panel: #fbf8fa;
-  --panel-raised: #f0e8ee;
-  --border: #ddd0da;
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --panel-raised: #f4eef2;
+  --border: #ebe7e1;
   --text: #4a3f4d;
-  --text-dim: #857a89;
-  --text-h: #241d27;
+  --text-dim: #847f86;
+  --text-h: #1d1b1e;
 
-  --accent: #c81e94;
-  --accent-2: #e94fb0;
-  --accent-dim: rgba(200, 30, 148, 0.10);
-  --accent-border: rgba(200, 30, 148, 0.38);
+  --accent: #e23a8d;
+  --accent-2: #b31f6b;
+  --accent-dim: rgba(226, 58, 141, 0.10);
+  --accent-border: rgba(226, 58, 141, 0.35);
 
-  --mint: #2e9d72;
-  --mint-dim: rgba(46, 157, 114, 0.12);
+  --mint: #1f9e77;
+  --mint-dim: rgba(31, 158, 119, 0.12);
 
-  --good: #2e9d72;
-  --bad: #c94a35;
+  --good: #1f9e77;
+  --bad: #c24545;
   --info: #4472c4;
 
   color-scheme: light;
@@ -85,6 +90,13 @@ h1, h2, h3 {
 .num {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Fraunces, used sparingly — the brand name and a page's own title, not
+   every small widget heading, so the display face stays a signature
+   rather than diluting into every h1/h2/h3 on the page. */
+.display {
+  font-family: var(--display);
 }
 
 ::-webkit-scrollbar {
