@@ -1,6 +1,7 @@
 import { getSupabase } from "./supabase";
 import { savePersistedState, loadPersistedState } from "./persistence";
 import { showToast } from "./toast";
+import { getCachedPageRows, setCachedPageRows, invalidateCachedPageRows } from "./rowsCache";
 import type {
   Department, TaskPage, DataRow, ChartConfig, PivotConfig, MatrixConfig, CardConfig, TextConfig,
 } from "../types";
@@ -10,6 +11,20 @@ const PAGES = "pages";
 const WIDGETS = "widgets";
 const PAGE_ROW_CHUNKS = "page_row_chunks";
 const ACTIVITY_LOG = "activity_log";
+
+// Explicit column lists instead of select("*") — two reasons: (1) it's
+// simply less data over the wire per request, and (2) critically for
+// `pages`, older projects that migrated from the old single-blob storage
+// (see README's "Setting up shared storage") may still have a legacy
+// `rows` column sitting on that table with the FULL row data duplicated
+// there — select("*") would silently re-download that huge column on
+// every single metadata load, for every user, in addition to the (correct,
+// already-lean) page_row_chunks fetch. Naming columns explicitly makes
+// that impossible regardless of what old columns still exist on the table.
+const TEAMS_COLUMNS = "id, name, created_at";
+const PAGES_COLUMNS =
+  "id, team_id, name, source_type, sheet_url, sheet_tab_title, last_updated, columns, measures, calculated_columns, active_filters, widget_order, created_at";
+const WIDGETS_COLUMNS = "id, page_id, kind, config, created_at";
 
 /** Best-effort audit trail: "who did what, when" for the high-level actions
  *  (team/page create-rename-delete, connecting/refreshing data, user
@@ -186,9 +201,9 @@ async function fetchTeamsPagesWidgets(): Promise<
   const supabase = getSupabase();
   if (!supabase) return null;
   const [teamsRes, pagesRes, widgetsRes] = await Promise.all([
-    supabase.from(TEAMS).select("*").order("created_at", { ascending: true }),
-    supabase.from(PAGES).select("*").order("created_at", { ascending: true }),
-    supabase.from(WIDGETS).select("*").order("created_at", { ascending: true }),
+    supabase.from(TEAMS).select(TEAMS_COLUMNS).order("created_at", { ascending: true }),
+    supabase.from(PAGES).select(PAGES_COLUMNS).order("created_at", { ascending: true }),
+    supabase.from(WIDGETS).select(WIDGETS_COLUMNS).order("created_at", { ascending: true }),
   ]);
   if (teamsRes.error || pagesRes.error || widgetsRes.error) {
     console.error(
@@ -230,8 +245,20 @@ function buildDepartments(
 /** Fetches just one page's rows, in bounded pages. Used both when the app
  *  first shows a page (lazy load — see App.tsx) and when a realtime event
  *  says only that one page's chunks changed — there's no reason to ever
- *  read anyone else's data just because one page's sheet was refreshed. */
-export async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
+ *  read anyone else's data just because one page's sheet was refreshed.
+ *
+ *  Checks the client-side IndexedDB cache first (see rowsCache.ts, ~24h
+ *  TTL) — since the shared data only actually changes once a day, most
+ *  calls to this never need to touch the network at all. Pass
+ *  `bypassCache: true` (used by the "Refresh data" flow) to force a real
+ *  Supabase read regardless of what's cached, e.g. right after writing new
+ *  rows so the cache doesn't look stale to the person who just refreshed. */
+export async function loadPageRows(pageId: string, bypassCache = false): Promise<DataRow[] | null> {
+  if (!bypassCache) {
+    const cached = await getCachedPageRows(pageId);
+    if (cached !== null) return cached;
+  }
+
   const supabase = getSupabase();
   if (!supabase) return null;
   const PAGE_SIZE = 100;
@@ -253,6 +280,7 @@ export async function loadPageRows(pageId: string): Promise<DataRow[] | null> {
     if (!data || data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
+  setCachedPageRows(pageId, all); // write-through, so the next load (this session or tomorrow, within 24h) skips the network entirely
   return all;
 }
 
@@ -380,6 +408,11 @@ async function saveRowsRemote(
         .eq("page_id", pageId)
         .gte("chunk_index", chunks.length);
       if (cleanupError) warnSaveFailedOnce("cleaning up old row chunks", cleanupError);
+      // "Refresh data" is the one place that's supposed to bypass and update
+      // the cache (see rowsCache.ts) — write the just-saved rows straight in
+      // so this same browser sees them as fresh immediately, instead of
+      // waiting out whatever was cached before this refresh.
+      setCachedPageRows(pageId, rows);
       return true;
     } catch (e) {
       warnSaveFailedOnce("this page's data (a chunk of rows)", e);
@@ -437,6 +470,7 @@ export async function savePageRemote(
 }
 
 export async function deletePageRemote(id: string): Promise<void> {
+  invalidateCachedPageRows(id);
   const supabase = getSupabase();
   if (!supabase) return;
   await trackSelfWrite(async () => {
@@ -526,13 +560,26 @@ export function subscribeToTeamsChanges(
   const rowsTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function reloadPageRows(pageId: string) {
     if (isLikelySelfEcho()) return;
+
+    // If this browser never actually loaded this page's rows in the first
+    // place (nobody here has viewed it this session), skip refetching it
+    // now — the lazy-load-on-view effect in App.tsx will fetch it fresh,
+    // cache included, the moment someone actually opens it. Without this
+    // check, every connected browser (including people who never open that
+    // page at all) would re-download full row data for every single page
+    // touched by e.g. the 3 AM sync — that fan-out across N idle clients ×
+    // M synced pages is a much bigger source of unnecessary egress than any
+    // one person's own navigation.
+    const existingPage = getCurrentDepartments().flatMap((d) => d.pages).find((p) => p.id === pageId);
+    if (!existingPage || existingPage.rows.length === 0) return;
+
     const existing = rowsTimers.get(pageId);
     if (existing) clearTimeout(existing);
     rowsTimers.set(
       pageId,
       setTimeout(async () => {
         rowsTimers.delete(pageId);
-        const rows = await loadPageRows(pageId);
+        const rows = await loadPageRows(pageId, true); // bypassCache: this IS the change, no point checking a now-stale cache first
         if (rows === null) return; // read failed — leave whatever's currently shown alone
         onChange(
           getCurrentDepartments().map((d) => ({

@@ -5,6 +5,9 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 ## What's new in this update
 
 **Latest round:**
+- **Fixed a likely major source of high Supabase egress:** metadata queries no longer use `select("*")`, which could silently re-download a leftover legacy `pages.rows` column full of duplicate row data on every load. See "Cutting Supabase egress" below — there's one SQL command you should run once to finish this.
+- **Added a ~24h client-side (IndexedDB) cache for page data**, so reloading the dashboard or switching pages doesn't keep re-fetching from Supabase — "Refresh data" is the one thing that bypasses and updates it. Also stopped the realtime subscription from re-downloading a page's data for browsers that never had it open in the first place.
+- **AI assistant now uses Google's Gemini API by default** — a genuinely free tier (no credit card), instead of Anthropic's pay-as-you-go API. See "Wiring up the AI assistant" below.
 - **Measure formulas now support explicit aggregate functions** — `SUM([Column])`, `COUNT([Column])`, `AVG(...)`, `MIN(...)`, `MAX(...)`, `DISTINCT(...)` — not just implicit sum. Autocomplete suggests these alongside measures/columns.
 - **Pie charts show each slice's percentage directly on the chart**, not just on hover.
 - **Treemap cells show their name and share-of-total percentage directly on the cell**, not just on hover.
@@ -358,6 +361,40 @@ Since only the Admin account connects/refreshes data at all now (see "Roles & pe
 3. Make sure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are also set in Vercel (same ones the crons use) — this endpoint checks the caller's real signed-in session against those, so only the actual Admin account can ever use it.
 4. Deploy. From then on, "Refresh data" and "Browse from Drive" both silently pull a fresh token from this endpoint first, falling back to the old interactive popup only if it isn't set up (or if a different, non-admin account somehow tries).
 
+## Cutting Supabase egress (bandwidth) usage
+
+If Supabase's dashboard shows unusually high egress (e.g. over a gigabyte a day for a small internal tool), there are two separate things going on — one is very likely the main cause, the other is a client-side optimization on top.
+
+### The likely main cause: a leftover `rows` column on `pages`
+
+If this project was ever migrated from the old single-JSON-blob storage to the current `page_row_chunks` design (see "Setting up shared storage" above), the migration SQL **copies** the old data across but only *optionally* drops the original column — the cleanup line was left commented out on purpose, so nothing broke for anyone who hadn't verified the new setup yet:
+
+```sql
+-- alter table pages drop column rows;
+```
+
+If that line was never actually run, `pages.rows` still exists and still holds a full copy of every page's row data, duplicated alongside the newer `page_row_chunks` table. Every metadata load — which happens once per app load, for every single user — used to fetch this with `select("*")` on `pages`, silently re-downloading that entire duplicate blob every time, for data that's already being fetched correctly (and far more cheaply) from `page_row_chunks`. That alone can easily account for the bulk of unexpected egress.
+
+**Fixed in code:** `pages`/`teams`/`widgets` queries now name their columns explicitly instead of `select("*")`, so this can't happen even if the column still exists.
+
+**You should also actually run the cleanup now**, once you've confirmed the app is working correctly (reload it, check a page with a large sheet loads fine):
+
+```sql
+alter table pages drop column rows;
+```
+
+This is safe — nothing in the app reads or writes that column anymore.
+
+### Client-side caching (IndexedDB, ~24h)
+
+Since the shared data only actually changes once a day (the 3 AM sync), reloading the dashboard or switching between pages doesn't need to re-fetch from Supabase every time. `src/lib/rowsCache.ts` caches each page's rows in the browser's IndexedDB for ~24 hours:
+
+- Opening a page, switching teams, or reloading the browser reads from this cache first — no Supabase request at all if it's still fresh.
+- **"Refresh data"** (and the background 3 AM / on-login sync) is the one thing that bypasses the cache and writes the newly-fetched rows straight back into it, so a manual refresh is never left looking stale.
+- The realtime subscription also **skips reloading a page's rows for a browser that never had that page open in the first place** — previously, every connected browser (including people not even looking at the affected page) would re-download full row data for every page touched by e.g. the 3 AM sync, which is a much bigger source of unnecessary egress than any one person's own navigation.
+
+No SQL or setup needed for this part — it's automatic once this version is deployed. If you ever need to clear it (e.g. testing), it's in the browser's DevTools → Application → IndexedDB → `breadfast-dashboard-cache`.
+
 ## Keeping Supabase from pausing (optional, fixes the "opens empty, works a moment later" pattern)
 
 Supabase's free tier automatically pauses a project after a period of no API activity. The first request after that can take 10-30+ seconds to wake back up — which shows up in the app as: opens to an empty/placeholder page, then works fine if you wait a moment or refresh. The app now retries this automatically in the background (and shows a "Try again now" button), so it self-heals either way — but if you'd rather it just never happened, keep the project pinged so it never goes to sleep:
@@ -437,18 +474,27 @@ Bar, Line, Area, Pie, Scatter, and Radar — pick the type, X column, and Y colu
 
 ## Wiring up the AI assistant
 
-The assistant calls `/api/assistant` (see `src/lib/assistant.ts`) — it never calls Anthropic directly from the browser, since an API key in frontend code would be visible via devtools.
+The assistant calls `/api/assistant` (see `src/lib/assistant.ts`) — it never calls Google/Anthropic directly from the browser, since an API key in frontend code would be visible via devtools.
+
+By default this is wired up for **Google's Gemini API**, which has a genuine free tier (no credit card needed) — a better fit for a small internal tool than Anthropic's API, which is pay-as-you-go with no permanent free tier.
 
 To enable it on Vercel:
 1. Rename `api/assistant.example.js` to `api/assistant.js`.
-2. In Vercel → Settings → Environment Variables, add `ANTHROPIC_API_KEY` (from [console.anthropic.com](https://console.anthropic.com)).
-3. Redeploy — Vercel automatically turns files in `/api` into serverless functions.
+2. Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — sign in with any Google account, click "Create API key." No billing setup required for the free tier.
+3. In Vercel → Settings → Environment Variables, add `GEMINI_API_KEY` = the key you just copied.
+4. Redeploy — Vercel automatically turns files in `/api` into serverless functions.
+
+**Free-tier limits** (Google can change these — check [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits) for current numbers): the default model, `gemini-2.5-flash`, comfortably covers a small team's occasional questions. If you ever hit the daily cap, switch the `model` value in `api/assistant.js` to `gemini-2.5-flash-lite`, which has an even higher free daily limit at slightly lower quality.
+
+**One tradeoff worth knowing:** on the free tier, Google's terms allow using your prompts/responses to improve their models (this stops applying once billing is enabled on the project, or on Vertex AI). For an internal inventory-accounting tool this is usually a non-issue, but keep it in mind.
+
+**Prefer Claude instead?** Anthropic's API has no permanent free tier (it's billed per token, though Claude Sonnet is inexpensive for short answers like this) but some people prefer its answer quality/style. Swap `api/assistant.js`'s fetch call for `https://api.anthropic.com/v1/messages` with an `x-api-key` header and `ANTHROPIC_API_KEY` instead — same request/response shape otherwise (`{ question, departmentName, columns, sampleRows, totalRows }` in, `{ answer }` out), so nothing on the frontend needs to change either way.
 
 **Troubleshooting "I couldn't reach the assistant backend":**
 - Did you rename the file (step 1)? If it's still `assistant.example.js`, Vercel never turns it into an endpoint and `/api/assistant` 404s.
-- Is `ANTHROPIC_API_KEY` set in Vercel's **Environment Variables** (not just your local `.env`)? Did you redeploy after adding it?
+- Is `GEMINI_API_KEY` set in Vercel's **Environment Variables** (not just your local `.env`)? Did you redeploy after adding it?
 - Check **Vercel → your project → Deployments → (latest) → Functions/Logs** for the actual error message from `api/assistant.js` — it's usually more specific than what shows in the chat panel.
-- Make sure the `model` value in `api/assistant.js` is a real, current model name (check [docs.claude.com](https://docs.claude.com) for the current list) — an outdated or mistyped model name will make every request fail with a 400 error.
+- Make sure the `model` value in `api/assistant.js` is a real, current model name (check [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) for the current list) — an outdated or mistyped model name will make every request fail with a 400/404 error.
 
 ## Real authentication & Row Level Security (implemented)
 
