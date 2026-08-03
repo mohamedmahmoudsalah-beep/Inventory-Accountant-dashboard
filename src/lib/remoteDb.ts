@@ -134,6 +134,45 @@ function chunkRows(rows: DataRow[]): DataRow[][] {
   return chunks;
 }
 
+/** What's actually stored in each page_row_chunks.data cell. Storing rows
+ *  as plain objects (`{"Date": "...", "SKU": "...", ...}`) repeats every
+ *  column NAME on every single row — for a wide sheet with thousands of
+ *  rows, that's often a bigger chunk of the JSON than the actual values.
+ *  Storing the column names once per chunk, and each row as a plain
+ *  value-array in that same order, cuts a meaningful share of the bytes
+ *  actually sent over the wire on every read — with no change to what the
+ *  rest of the app sees, since it's converted back to normal row objects
+ *  immediately after loading (see rowsFromColumnarChunk). */
+interface ColumnarChunk {
+  cols: string[];
+  rows: unknown[][];
+}
+
+function toColumnarChunk(rows: DataRow[]): ColumnarChunk {
+  // Built from the union of every row's keys, not just the first row's —
+  // spreadsheet data occasionally has a row missing a trailing blank cell,
+  // and this makes sure that never silently drops a column for the whole chunk.
+  const colSet = new Set<string>();
+  for (const row of rows) for (const key of Object.keys(row)) colSet.add(key);
+  const cols = Array.from(colSet);
+  return { cols, rows: rows.map((row) => cols.map((c) => row[c] ?? "")) };
+}
+
+/** Reconstructs plain row objects from a columnar chunk. Also transparently
+ *  accepts the OLD format (a plain array of row objects, from before this
+ *  change) so rows saved before this update keep working until the next
+ *  refresh re-saves them in the new, smaller format — no migration step needed. */
+function rowsFromStoredChunk(data: unknown): DataRow[] {
+  if (Array.isArray(data)) return data as DataRow[]; // old format
+  const chunk = data as ColumnarChunk;
+  if (!chunk?.cols || !chunk?.rows) return [];
+  return chunk.rows.map((values) => {
+    const row: DataRow = {};
+    chunk.cols.forEach((col, i) => (row[col] = values[i] as DataRow[string]));
+    return row;
+  });
+}
+
 type WidgetKind = "chart" | "pivot" | "matrix" | "card" | "text";
 
 interface WidgetRow {
@@ -156,12 +195,6 @@ interface PageRow {
   calculated_columns: unknown[] | null;
   active_filters: unknown[] | null;
   widget_order: string[] | null;
-}
-
-interface PageRowChunkRow {
-  page_id: string;
-  chunk_index: number;
-  data: DataRow[];
 }
 
 interface TeamRow {
@@ -276,7 +309,7 @@ export async function loadPageRows(pageId: string, bypassCache = false): Promise
       console.error(`Supabase: failed to load rows for page ${pageId}.`, error);
       return null;
     }
-    (data ?? []).forEach((c) => all.push(...((c as PageRowChunkRow).data ?? [])));
+    (data ?? []).forEach((c) => all.push(...rowsFromStoredChunk((c as { data: unknown }).data)));
     if (!data || data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
@@ -389,7 +422,7 @@ async function saveRowsRemote(
         const batch = chunks.slice(start, start + CONCURRENCY);
         const results = await Promise.all(
           batch.map((chunk, i) =>
-            supabase.from(PAGE_ROW_CHUNKS).upsert({ page_id: pageId, chunk_index: start + i, data: chunk })
+            supabase.from(PAGE_ROW_CHUNKS).upsert({ page_id: pageId, chunk_index: start + i, data: toColumnarChunk(chunk) })
           )
         );
         const failed = results.find((r) => r.error);

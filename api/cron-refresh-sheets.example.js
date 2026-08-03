@@ -228,12 +228,25 @@ function chunkRows(rows) {
   return chunks;
 }
 
+// Mirrors src/lib/remoteDb.ts's toColumnarChunk exactly — stores a chunk's
+// column names once, and each row as a plain value-array in that same
+// order, instead of repeating every column name on every row object. For a
+// wide sheet with thousands of rows this cuts a meaningful share of the
+// actual bytes moved on every future read (which is most of what "egress"
+// usage in Supabase's dashboard is counting).
+function toColumnarChunk(rows) {
+  const colSet = new Set();
+  for (const row of rows) for (const key of Object.keys(row)) colSet.add(key);
+  const cols = Array.from(colSet);
+  return { cols, rows: rows.map((row) => cols.map((c) => (row[c] === undefined ? "" : row[c]))) };
+}
+
 async function saveRowsChunked(supabase, pageId, rows) {
   const chunks = chunkRows(rows);
   for (let i = 0; i < chunks.length; i++) {
     const { error } = await supabase
       .from("page_row_chunks")
-      .upsert({ page_id: pageId, chunk_index: i, data: chunks[i] });
+      .upsert({ page_id: pageId, chunk_index: i, data: toColumnarChunk(chunks[i]) });
     if (error) throw error;
   }
   const { error: cleanupError } = await supabase

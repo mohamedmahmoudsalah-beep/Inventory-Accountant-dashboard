@@ -395,6 +395,12 @@ Since the shared data only actually changes once a day (the 3 AM sync), reloadin
 
 No SQL or setup needed for this part — it's automatic once this version is deployed. If you ever need to clear it (e.g. testing), it's in the browser's DevTools → Application → IndexedDB → `breadfast-dashboard-cache`.
 
+### Smaller row storage (columnar chunks)
+
+Rows used to be stored as plain JSON objects — `{"Date": "...", "SKU": "...", "Value": "..."}` — which repeats every column NAME on every single row. For a wide sheet with thousands of rows, that repetition is often a bigger share of the total bytes than the actual values. `page_row_chunks` now stores each chunk's column names once, plus every row as a plain value-array in that same order, and the app converts it back to normal row objects immediately after loading — nothing else changes, it's just meaningfully fewer bytes moved on every read (which is most of what shows up as "PostgREST Egress" in Supabase's usage dashboard).
+
+This is backward-compatible automatically: any chunk saved before this update (in the old format) still loads correctly, and gets re-saved in the new, smaller format the next time that page is refreshed — no migration step to run.
+
 ## Keeping Supabase from pausing (optional, fixes the "opens empty, works a moment later" pattern)
 
 Supabase's free tier automatically pauses a project after a period of no API activity. The first request after that can take 10-30+ seconds to wake back up — which shows up in the app as: opens to an empty/placeholder page, then works fine if you wait a moment or refresh. The app now retries this automatically in the background (and shows a "Try again now" button), so it self-heals either way — but if you'd rather it just never happened, keep the project pinged so it never goes to sleep:

@@ -76,6 +76,20 @@ function formatCompact(value) {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
 }
 
+// Mirrors src/lib/remoteDb.ts's rowsFromStoredChunk exactly — reconstructs
+// plain row objects from the columnar {cols, rows} storage format, while
+// still transparently accepting the old plain-array-of-objects format for
+// any chunk that hasn't been re-saved since that change.
+function rowsFromStoredChunk(data) {
+  if (Array.isArray(data)) return data; // old format
+  if (!data?.cols || !data?.rows) return [];
+  return data.rows.map((values) => {
+    const row = {};
+    data.cols.forEach((col, i) => (row[col] = values[i]));
+    return row;
+  });
+}
+
 async function loadAllRows(supabase, pageId) {
   const { data, error } = await supabase
     .from("page_row_chunks")
@@ -83,7 +97,7 @@ async function loadAllRows(supabase, pageId) {
     .eq("page_id", pageId)
     .order("chunk_index", { ascending: true });
   if (error) throw error;
-  return (data ?? []).flatMap((c) => c.data ?? []);
+  return (data ?? []).flatMap((c) => rowsFromStoredChunk(c.data));
 }
 
 function computeCardValue(rows, config, measures) {
