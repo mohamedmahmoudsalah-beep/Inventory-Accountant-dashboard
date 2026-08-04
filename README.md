@@ -493,7 +493,9 @@ To enable it on Vercel:
 3. In Vercel → Settings → Environment Variables, add `GEMINI_API_KEY` = the key you just copied.
 4. Redeploy — Vercel automatically turns files in `/api` into serverless functions.
 
-**Free-tier limits** (Google can change these — check [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits) for current numbers): the default model, `gemini-2.5-flash`, comfortably covers a small team's occasional questions. If you ever hit the daily cap, switch the `model` value in `api/assistant.js` to `gemini-2.5-flash-lite`, which has an even higher free daily limit at slightly lower quality.
+**Free-tier limits** (Google can change these — check [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits) for current numbers): the default model, `gemini-3.5-flash-lite`, comfortably covers a small team's occasional questions and has Google's highest free daily quota in the current lineup. For noticeably smarter answers at a lower daily cap, switch the `model` value in `api/assistant.js` to `gemini-3.5-flash`.
+
+**If you hit a `"models/... is no longer available to new users"` error:** Google has been retiring `gemini-2.5-*` model IDs for new API keys well before their listed shutdown dates. Check [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) for the current model list and swap the `model` value in `api/assistant.js` — nothing else needs to change.
 
 **One tradeoff worth knowing:** on the free tier, Google's terms allow using your prompts/responses to improve their models (this stops applying once billing is enabled on the project, or on Vertex AI). For an internal inventory-accounting tool this is usually a non-issue, but keep it in mind.
 

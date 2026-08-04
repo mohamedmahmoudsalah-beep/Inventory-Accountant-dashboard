@@ -14,10 +14,19 @@
 //      else to change there.
 //
 // Free-tier limits (Google can change these — check https://ai.google.dev/gemini-api/docs/rate-limits
-// for the current numbers): "gemini-2.5-flash" below is comfortably enough
-// for a small team asking occasional questions. If you ever hit the daily
-// cap, "gemini-2.5-flash-lite" has an even higher free daily limit at
-// slightly lower quality — just change the `model` value below.
+// for the current numbers): "gemini-3.5-flash-lite" below is comfortably
+// enough for a small team asking occasional questions, and has Google's
+// highest free daily quota in the current lineup. If you want noticeably
+// smarter answers at the cost of a lower daily cap, "gemini-3.5-flash" is
+// the step up — just change the `model` value below.
+//
+// Note (Aug 2026): Google has been retiring gemini-2.5-* models for new
+// API keys well ahead of their listed shutdown dates (they start returning
+// "model ... is no longer available to new users" 404s) — so this project
+// intentionally pins to the 3.5 family instead of 2.5. If this ever breaks
+// again, check https://ai.google.dev/gemini-api/docs/models for the
+// current model list and swap the string below; nothing else in this file
+// needs to change.
 //
 // One tradeoff to know about: on the free tier, Google's terms allow using
 // your prompts/responses to improve their models (this doesn't apply once
@@ -50,7 +59,7 @@ chart type (bar/line/pie) and which columns would best visualize the answer.
 
 User question: ${question}`;
 
-  const model = "gemini-2.5-flash";
+  const model = "gemini-3.5-flash-lite";
 
   try {
     const response = await fetch(
