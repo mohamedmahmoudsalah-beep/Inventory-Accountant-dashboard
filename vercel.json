@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron-refresh-sheets",
-      "schedule": "0 12 * * *"
+      "schedule": "0 9 * * 0"
     },
     {
       "path": "/api/cron-daily-report",

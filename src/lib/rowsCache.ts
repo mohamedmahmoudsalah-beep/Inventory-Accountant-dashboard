@@ -4,23 +4,27 @@ import type { DataRow } from "../types";
 // localStorage — a single big sheet's rows can easily exceed localStorage's
 // ~5-10MB per-origin limit, where IndexedDB comfortably handles much more).
 //
-// Why this exists: the shared data only actually changes once a day (the
-// 3 AM sync — see README's "Setting up shared storage" / "server-side data
-// refresh"), but without a cache, every page load / browser reload / tab
-// re-open re-downloads every visited page's full row data from Supabase
-// again, even though it's identical to what was already fetched a minute
-// ago. That repeated, unnecessary egress is what actually shows up as high
-// Supabase bandwidth usage over a full day with several people's browsers
-// open. A 24-hour cache means: browse/reload as much as you want, and it
-// only ever re-hits Supabase once that page's cached copy turns a day old
-// — or immediately, for anyone who gets a live update via the realtime
-// subscription or an explicit "Refresh data" click, both of which write
-// fresh data straight into this cache instead of waiting for the TTL.
+// Why this exists: the shared data only actually changes once a week (the
+// Sunday-noon sync — see README's "Setting up shared storage" / "server-side
+// data refresh"), plus whenever the Admin does a manual "Refresh data".
+// Without a cache, every page load / browser reload / tab re-open
+// re-downloads every visited page's full row data from Supabase again,
+// even though it's identical to what was already fetched a minute ago.
+// That repeated, unnecessary egress is what actually shows up as high
+// Supabase bandwidth usage. A ~6.5-day cache means: browse/reload as much
+// as you want, and it only ever re-hits Supabase once that page's cached
+// copy is about to go a week stale — or immediately, for anyone who gets a
+// live update via the realtime subscription or an explicit "Refresh data"
+// click, both of which write fresh data straight into this cache instead
+// of waiting for the TTL.
 
 const DB_NAME = "breadfast-dashboard-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "pageRows";
-const TTL_MS = 24 * 60 * 60 * 1000;
+// Matches the sync cadence (weekly, Sunday noon — see App.tsx), minus a
+// small buffer, so a cache entry never looks "fresh" past the point the
+// next scheduled sync was supposed to have already refreshed it.
+const TTL_MS = 6.5 * 24 * 60 * 60 * 1000;
 
 interface CacheEntry {
   pageId: string;
@@ -56,7 +60,7 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
-/** Returns a page's cached rows if present AND still under the 24h TTL,
+/** Returns a page's cached rows if present AND still under the ~6.5-day TTL,
  *  otherwise null (meaning: go fetch it from Supabase). */
 export async function getCachedPageRows(pageId: string): Promise<DataRow[] | null> {
   const db = await openDb();

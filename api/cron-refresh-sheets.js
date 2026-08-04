@@ -2,13 +2,14 @@
 //
 // Why this exists: without it, "refreshing the data" only happens from
 // inside someone's open browser tab (a manual click, or the app's own
-// hourly setInterval while an Admin/Manager tab happens to be open). If
-// nobody has the dashboard open at the top of the hour, nothing refreshes
-// and everyone just sees whatever was last fetched — sometimes described as
-// "even the Admin doesn't get the latest data without a manual refresh."
-// This function does the same refresh, but triggered by Vercel's own cron
-// scheduler on the server, so it runs on a real, dependable clock —no
-// browser needed at all.
+// weekly background sync while the Admin's tab happens to be open at that
+// exact moment). If the Admin doesn't have the dashboard open then, nothing
+// refreshes and everyone just sees whatever was last fetched. This function
+// does the same refresh, but triggered by Vercel's own cron scheduler on
+// the server, so it runs on a real, dependable clock — no browser needed at
+// all. Anyone who wants fresher data in between (daily, or right now) still
+// has the in-app "Refresh data" button for that — this cron is just the
+// automatic weekly baseline, not the only way to refresh.
 //
 // Setup:
 //   1. Rename this file to `cron-refresh-sheets.js` (Vercel auto-detects
@@ -26,16 +27,21 @@
 //   3. Make sure vercel.json (already in the repo root) has a "crons" entry
 //      pointing at "/api/cron-refresh-sheets".
 //
-//      IMPORTANT — Vercel's free "Hobby" tier (which this project runs on)
-//      only allows cron jobs to fire ONCE PER DAY. An hourly expression like
-//      "0 * * * *" will fail at deploy time on Hobby with an error like
-//      "Hobby accounts are limited to daily cron jobs." vercel.json in this
-//      repo is set to "0 3 * * *" (once a day, ~3am UTC) to match that
-//      limit. Vercel also only guarantees it'll fire *sometime within* that
-//      hour on Hobby, not at the exact minute.
-//      If you upgrade to Vercel Pro, you can change the schedule to
-//      "0 * * * *" for a real hourly refresh (matching the app's existing
-//      client-side hourly cadence) — that's the only line to change.
+//      Scheduled for once a week — Sunday at 12:00 noon, Cairo time —
+//      matching the app's own client-side weekly sync. Vercel's free
+//      "Hobby" tier (which this project runs on) only allows cron jobs to
+//      fire at most once a day, so a weekly schedule easily fits that; it
+//      also only guarantees it'll fire *sometime within* that hour on
+//      Hobby, not at the exact minute.
+//
+//      IMPORTANT — Cairo time and UTC (what Vercel's cron actually runs on)
+//      aren't a fixed offset: Egypt observes Daylight Saving Time (EEST,
+//      UTC+3) from late April to late October, and Standard Time (EET,
+//      UTC+2) the rest of the year. vercel.json's "0 9 * * 0" is set for
+//      the UTC+3 half of the year (9:00 UTC = 12:00 noon Cairo). Once Egypt
+//      switches back to Standard Time (~late October), change it to
+//      "0 10 * * 0" (10:00 UTC = 12:00 noon Cairo) to keep firing at noon
+//      local time — and back to "0 9 * * 0" the following April.
 //   4. Deploy. Vercel will call this endpoint on its own from then on; you
 //      don't need to do anything else, and nobody needs to keep a tab open.
 //

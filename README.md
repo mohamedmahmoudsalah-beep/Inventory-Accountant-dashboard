@@ -5,13 +5,14 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 ## What's new in this update
 
 **Latest round:**
+- **Data sync changed from daily to weekly** — Sunday at 12:00 noon (Cairo time), both the client-side safety-net sync and the server-side cron. Anyone who needs data refreshed more often than that still uses "Refresh data" manually, same as always. The IndexedDB cache TTL was extended to match (~6.5 days instead of ~24h).
 - **Fixed a likely major source of high Supabase egress:** metadata queries no longer use `select("*")`, which could silently re-download a leftover legacy `pages.rows` column full of duplicate row data on every load. See "Cutting Supabase egress" below — there's one SQL command you should run once to finish this.
 - **Added a ~24h client-side (IndexedDB) cache for page data**, so reloading the dashboard or switching pages doesn't keep re-fetching from Supabase — "Refresh data" is the one thing that bypasses and updates it. Also stopped the realtime subscription from re-downloading a page's data for browsers that never had it open in the first place.
 - **AI assistant now uses Google's Gemini API by default** — a genuinely free tier (no credit card), instead of Anthropic's pay-as-you-go API. See "Wiring up the AI assistant" below.
 - **Measure formulas now support explicit aggregate functions** — `SUM([Column])`, `COUNT([Column])`, `AVG(...)`, `MIN(...)`, `MAX(...)`, `DISTINCT(...)` — not just implicit sum. Autocomplete suggests these alongside measures/columns.
 - **Pie charts show each slice's percentage directly on the chart**, not just on hover.
 - **Treemap cells show their name and share-of-total percentage directly on the cell**, not just on hover.
-- **A safety-net sync on login:** if a connected sheet's data is more than ~20 hours old (the server cron isn't set up yet, or a browser wasn't open at 3 AM), the app now syncs it automatically in the background as soon as the Admin logs in — with a visible "Syncing…" notification — instead of silently showing stale numbers until someone remembers to click Refresh.
+- **A safety-net sync on login:** if a connected sheet's data is more than ~6.5 days old (the server cron isn't set up yet, or a browser wasn't open at the scheduled weekly sync time), the app now syncs it automatically in the background as soon as the Admin logs in — with a visible "Syncing…" notification — instead of silently showing stale numbers until someone remembers to click Refresh.
 
 **Latest round:**
 - **Card widget settings are now hidden behind a gear icon** (like Pivot/Matrix already were) instead of always showing.
@@ -22,7 +23,7 @@ A Power BI–style dashboard for your team: each **team** (department) can have 
 
 **A round of completeness/UX fixes and new features:**
 - **Manager role tightened:** Managers can no longer connect, import, or refresh any data source — only the Admin account does that now. Managers still add/rename/remove teams & pages and edit widgets. See "Roles & permissions" below.
-- **Daily sync instead of hourly:** the background data sync now runs once a day at 3 AM (Admin-only), instead of every hour.
+- **Weekly sync instead of daily:** the background data sync now runs once a week (Admin-only, Sunday at 12:00 noon Cairo time), instead of once a day. Anyone who wants fresher data in between still has the "Refresh data" button for that.
 - **Toast notifications instead of `alert()` popups** for errors and confirmations — small, dismissible, non-blocking.
 - **Undo for delete:** deleting a team or page no longer needs a blocking confirm dialog — it's removed immediately with a 6-second "Undo" toast, and only actually deleted from the shared database if you don't click Undo.
 - **Activity Log:** a new screen (Admins/Managers) showing who created/renamed/deleted teams & pages, connected/refreshed data, and changed user roles — see "Setting up shared storage" for the one extra table it needs.
@@ -73,9 +74,9 @@ Every previous save wrote the *entire* dashboard (all teams, all pages, all widg
 **Fixed excessive Supabase usage (Disk IO exhaustion warning):**
 The app used to push a full save to the shared database on almost every small edit (typing a chart title, moving a filter, resizing a widget's parent, etc.), which could exhaust a free-tier Supabase project's daily Disk IO budget and cause intermittent failures that looked like CORS errors. This is now much lighter:
 - Small edits are saved **locally only** (instant, free) so your own browser never loses your work.
-- The shared database is only written to: **once a day, at 3 AM** (a background sync, Admin-only, only runs while the Admin's browser tab happens to be open at that time), or immediately after a **deliberate** action — connecting/refreshing a sheet, importing a file, or adding/renaming/deleting a team or page.
+- The shared database is only written to: **once a week, Sunday at 12:00 noon Cairo time** (a background sync, Admin-only, only runs while the Admin's browser tab happens to be open at that time), or immediately after a **deliberate** action — connecting/refreshing a sheet, importing a file, or adding/renaming/deleting a team or page.
 - **Only the Admin account connects, imports, or refreshes any data source.** Managers can add/rename/remove teams & pages and edit charts/pivots/matrices/cards, but have no way to connect, import, or refresh data anymore — that's Admin-only. Employees and Viewers are read-only for data connections either way. This was a deliberate simplification so one account is the single source of truth for what data is loaded.
-- Sheet data fetched by the admin is shared with everyone automatically (no one else needs their own Drive access) — but only refreshes on the daily 3 AM sync or when the admin manually clicks refresh, not continuously.
+- Sheet data fetched by the admin is shared with everyone automatically (no one else needs their own Drive access) — but only refreshes on the weekly Sunday sync or when the admin manually clicks refresh, not continuously. If you want it refreshed more often than weekly, click **Refresh data** yourself whenever you like — the weekly sync is just the automatic baseline, not a limit.
 - Fixed imported/combined offline Excel data disappearing after a refresh — it's now saved immediately since (unlike a live sheet link) there's nowhere to re-fetch it from later.
 - Fixed repeated "couldn't load sheet" popups hammering the page for non-admin accounts — automatic background attempts now fail silently and only try once, instead of retrying and alerting endlessly.
 - Fixed manually resizing a chart/pivot silently reverting to the default size after any unrelated edit elsewhere on the page.
@@ -310,7 +311,7 @@ Once both variables are set, the app automatically starts reading/writing throug
 
 ## Setting up server-side data refresh (recommended — no browser needed)
 
-Without this, a connected sheet only ever refreshes when the Admin, with an open browser tab, either clicks **Refresh data** or happens to have the tab open at 3 AM (the app's own client-side daily sync, Admin-only). If nobody's logged in, the data just sits there until someone is — which is confusing when you expect "latest data" to actually mean latest.
+Without this, a connected sheet only ever refreshes when the Admin, with an open browser tab, either clicks **Refresh data** or happens to have the tab open at the scheduled weekly sync time (the app's own client-side weekly sync, Admin-only). If nobody's logged in, the data just sits there until someone is — which is confusing when you expect "latest data" to actually mean latest.
 
 This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refresh happens on Vercel's own clock, independent of anyone having the app open:
 
@@ -325,7 +326,7 @@ This adds a real server-side cron job (`api/cron-refresh-sheets.js`) so the refr
    (`SUPABASE_SERVICE_ROLE_KEY` and `CRON_SECRET` are server-only — never put them in `.env`/`VITE_...` variables, since anything prefixed `VITE_` ships to the browser.)
 4. Redeploy. `vercel.json` already registers the cron schedule.
 
-**Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 12 * * *` (once daily, ~noon UTC) to match that. If you're on Vercel Pro, you can change it to `0 * * * *` for a real hourly refresh.
+**Free "Hobby" plan limit:** Vercel only allows cron jobs to fire **at most once per day** on the free tier — an hourly schedule fails to deploy with "Hobby accounts are limited to daily cron jobs." `vercel.json` is set to `0 9 * * 0` (once a week, Sunday, ~noon Cairo time during Egypt's daylight-saving months — see the DST note in `api/cron-refresh-sheets.example.js` for when to switch it to `0 10 * * 0`). If you're on Vercel Pro, you could go as frequent as hourly (`0 * * * *`) instead.
 
 **Limitation, mostly optional to lift:** by default this only refreshes sheets connected via a public "Anyone with the link can view" link. If your "Browse from Drive" sheets are all tied to one fixed account anyway (this app already locks Drive access to a single allowed email), you can also enable refreshing those — see the long comment block at the top of `api/cron-refresh-sheets.example.js` ("Optional: also refreshing private Drive sheets") and the one-time helper script at `scripts/get-google-refresh-token.example.js`. It's a ~5 minute one-time setup (authorize once, get a refresh token, add it to Vercel's env vars) and after that the cron refreshes private Drive sheets too, with nobody needing to be signed in anywhere.
 
@@ -387,11 +388,13 @@ This is safe — nothing in the app reads or writes that column anymore.
 
 ### Client-side caching (IndexedDB, ~24h)
 
-Since the shared data only actually changes once a day (the 3 AM sync), reloading the dashboard or switching between pages doesn't need to re-fetch from Supabase every time. `src/lib/rowsCache.ts` caches each page's rows in the browser's IndexedDB for ~24 hours:
+Since the shared data only actually changes once a week (the Sunday-noon sync), reloading the dashboard or switching between pages doesn't need to re-fetch from Supabase every time. `src/lib/rowsCache.ts` caches each page's rows in the browser's IndexedDB for ~6.5 days:
 
 - Opening a page, switching teams, or reloading the browser reads from this cache first — no Supabase request at all if it's still fresh.
-- **"Refresh data"** (and the background 3 AM / on-login sync) is the one thing that bypasses the cache and writes the newly-fetched rows straight back into it, so a manual refresh is never left looking stale.
-- The realtime subscription also **skips reloading a page's rows for a browser that never had that page open in the first place** — previously, every connected browser (including people not even looking at the affected page) would re-download full row data for every page touched by e.g. the 3 AM sync, which is a much bigger source of unnecessary egress than any one person's own navigation.
+- **"Refresh data"** (and the background weekly / on-login sync) is the one thing that bypasses the cache and writes the newly-fetched rows straight back into it, so a manual refresh is never left looking stale.
+- The realtime subscription also **skips reloading a page's rows for a browser that never had that page open in the first place** — previously, every connected browser (including people not even looking at the affected page) would re-download full row data for every page touched by e.g. the weekly sync, which is a much bigger source of unnecessary egress than any one person's own navigation.
+
+**One trade-off worth knowing:** with a ~6.5-day cache, if the Admin does a manual mid-week "Refresh data," anyone who *already has that page open* gets the update instantly via the realtime subscription (which always bypasses the cache). But someone who opens that page for the first time *that week* later on will see their own last-cached copy until it naturally goes stale, rather than always getting the absolute latest write — a deliberate trade for the egress savings, matching a once-a-week data cadence.
 
 No SQL or setup needed for this part — it's automatic once this version is deployed. If you ever need to clear it (e.g. testing), it's in the browser's DevTools → Application → IndexedDB → `breadfast-dashboard-cache`.
 

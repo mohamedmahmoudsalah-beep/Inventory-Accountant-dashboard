@@ -280,8 +280,8 @@ function buildDepartments(
  *  says only that one page's chunks changed — there's no reason to ever
  *  read anyone else's data just because one page's sheet was refreshed.
  *
- *  Checks the client-side IndexedDB cache first (see rowsCache.ts, ~24h
- *  TTL) — since the shared data only actually changes once a day, most
+ *  Checks the client-side IndexedDB cache first (see rowsCache.ts, ~6.5-day
+ *  TTL) — since the shared data only actually changes once a week, most
  *  calls to this never need to touch the network at all. Pass
  *  `bypassCache: true` (used by the "Refresh data" flow) to force a real
  *  Supabase read regardless of what's cached, e.g. right after writing new
@@ -600,7 +600,7 @@ export function subscribeToTeamsChanges(
     // cache included, the moment someone actually opens it. Without this
     // check, every connected browser (including people who never open that
     // page at all) would re-download full row data for every single page
-    // touched by e.g. the 3 AM sync — that fan-out across N idle clients ×
+    // touched by e.g. the weekly sync — that fan-out across N idle clients ×
     // M synced pages is a much bigger source of unnecessary egress than any
     // one person's own navigation.
     const existingPage = getCurrentDepartments().flatMap((d) => d.pages).find((p) => p.id === pageId);

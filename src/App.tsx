@@ -393,12 +393,15 @@ function DashboardApp() {
   }, [activePage.id, activePage.sheetUrl, activePage.rows.length, user?.role, rowsLoadTick]);
 
   // Global, clock-aligned sync instead of continuous per-edit updates: once
-  // a day (at 3 AM, this browser's local time), re-fetch every sheet-connected
-  // page across every team and push the result once. The rest of the time,
-  // everyone just views whatever was last synced — no repeated fetching or
-  // writing. Admin-only (canManageDataSources is admin-only) — Managers don't
-  // touch data sources at all anymore, so this never runs for them even if
-  // their tab happens to be open at 3 AM.
+  // a WEEK (Sunday at 12:00 noon, this browser's local time), re-fetch every
+  // sheet-connected page across every team and push the result once. The
+  // rest of the time, everyone just views whatever was last synced — no
+  // repeated fetching or writing. Anyone who wants fresher data in between
+  // (daily, or right now) still has the "Refresh data" button for that —
+  // this weekly pass is just the automatic baseline. Admin-only
+  // (canManageDataSources is admin-only) — Managers don't touch data
+  // sources at all anymore, so this never runs for them even if their tab
+  // happens to be open at the scheduled time.
   //
   // This is a SAFETY NET on top of the server-side cron (see README's
   // "Setting up server-side data refresh") — that cron is the real fix for
@@ -439,18 +442,23 @@ function DashboardApp() {
       }
     }
 
-    function msUntilNext3AM() {
+    // Sunday = 0 in JS's getDay(). Finds the next Sunday at 12:00 noon,
+    // local time — if today IS Sunday but it's already past noon, that
+    // rolls forward to next Sunday instead of firing immediately.
+    function msUntilNextSundayNoon() {
       const now = new Date();
       const next = new Date(now);
-      next.setHours(3, 0, 0, 0);
-      if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+      next.setHours(12, 0, 0, 0);
+      const daysUntilSunday = (7 - next.getDay()) % 7;
+      next.setDate(next.getDate() + daysUntilSunday);
+      if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 7);
       return next.getTime() - now.getTime();
     }
 
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    const STALE_AFTER_MS = 20 * 60 * 60 * 1000; // ~20h — a bit under a day, so a missed 3 AM run still gets caught same day
+    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const STALE_AFTER_MS = 6.5 * 24 * 60 * 60 * 1000; // ~6.5 days — a bit under a week, so a missed Sunday run still gets caught before the next one
 
-    // On login/mount: if the server cron (or yesterday's 3 AM run) never
+    // On login/mount: if the server cron (or last Sunday's run) never
     // happened — no browser was open, the cron isn't set up yet, etc. —
     // don't just silently show stale numbers. Sync right now instead, with
     // a visible indicator, so the Admin never has to remember to click
@@ -463,8 +471,8 @@ function DashboardApp() {
 
     const timeoutId = setTimeout(function runAndReschedule() {
       syncAllSheetsNow(false);
-    }, msUntilNext3AM());
-    const intervalId = setInterval(() => syncAllSheetsNow(false), ONE_DAY_MS);
+    }, msUntilNextSundayNoon());
+    const intervalId = setInterval(() => syncAllSheetsNow(false), ONE_WEEK_MS);
 
     return () => {
       clearTimeout(timeoutId);
