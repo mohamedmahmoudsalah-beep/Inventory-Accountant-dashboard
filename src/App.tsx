@@ -28,7 +28,7 @@ import {
 import { savePersistedState } from "./lib/persistence";
 import {
   canEditWidgets, canExport as canExportPerm, canUseFilters,
-  canManageStructure, canManageDataSources,
+  canManageStructure, canManageDataSources, filterDepartmentsForUser,
 } from "./lib/permissions";
 import { applyCalculatedColumns } from "./lib/calculatedColumns";
 import { stampRowIds, ROW_ID_KEY } from "./lib/rowIds";
@@ -114,7 +114,7 @@ function passesFilter(row: DataRow, f: FilterConfig): boolean {
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 function DashboardApp() {
-  const { user } = useAuth();
+  const { user, usesRealAuth } = useAuth();
 
   const [departments, setDepartments] = useState<Department[]>([makeDefaultDepartment("sales", "Sales")]);
   const departmentsRef = useRef(departments);
@@ -323,8 +323,24 @@ function DashboardApp() {
     if (canEditWidgets(user?.role)) await deleteWidgetRemote(id);
   }
 
+  // What this signed-in person is actually allowed to see — for Employee/
+  // Viewer this narrows down to their assigned pages (see
+  // permissions.ts's filterDepartmentsForUser); Admin/Manager get the full
+  // tree back untouched either way.
+  const visibleDepartments = useMemo(
+    () => filterDepartmentsForUser(departments, user, usesRealAuth),
+    [departments, user, usesRealAuth]
+  );
+
   const activeDept = departments.find((d) => d.id === activeDeptId) ?? departments[0];
   const activePage = activeDept.pages.find((p) => p.id === activePageId) ?? activeDept.pages[0];
+  // Whether the page the app is *about* to render is actually one this
+  // person is allowed to see — Admin/Manager always pass (see
+  // filterDepartmentsForUser). Only matters in the "dashboard" view; the
+  // sidebar itself already can't be clicked into a hidden page, but a
+  // stale activePageId (leftover from a role change, or local storage from
+  // before an access list existed) could otherwise still render one.
+  const activePageIsAccessible = visibleDepartments.some((d) => d.pages.some((p) => p.id === activePage.id));
 
   // Rows are no longer eagerly loaded for every page at startup (see
   // remoteDb.ts's loadAllTeams doc comment) — each page's rows are fetched
@@ -1007,7 +1023,7 @@ function DashboardApp() {
   return (
     <div className="flex bg-[var(--bg)] min-h-svh">
       <Sidebar
-        departments={departments}
+        departments={visibleDepartments}
         activeDeptId={activeDeptId}
         activePageId={activePageId}
         showingDataSources={view === "dataSources"}
@@ -1046,9 +1062,18 @@ function DashboardApp() {
         {view === "dataSources" ? (
           <DataSourcesView departments={departments} />
         ) : view === "users" ? (
-          <UserManagement />
+          <UserManagement departments={departments} />
         ) : view === "activityLog" ? (
           <ActivityLogView />
+        ) : !activePageIsAccessible ? (
+          <div className="flex items-center justify-center h-svh px-6">
+            <div className="text-center max-w-sm">
+              <h2 className="text-lg mb-2">No pages assigned yet</h2>
+              <p className="text-sm text-[var(--text-dim)]">
+                You don't have access to any page yet. Ask an Admin to assign you one or more pages in Manage Users.
+              </p>
+            </div>
+          </div>
         ) : (
           <>
             <TopBar

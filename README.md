@@ -589,6 +589,96 @@ create policy "read for admin/manager" on activity_log for select using (public.
 
 **Known limitation:** removing someone in Manage Users deletes their `app_users` row (which the RLS policies above key everything off, so their access is fully cut immediately) but does **not** delete their underlying Supabase Auth login credential — that requires the `service_role` key, which the browser never has access to for good reason. To fully delete the account too: Supabase Dashboard → Authentication → Users → find them → Delete. A server-side admin API route (using the service key, never shipped to the browser) would be the way to fold that into the app itself later.
 
+## Page-level access for Employee/Viewer
+
+Admin and Manager always see every team and page, same as before. Employee and Viewer can now be scoped down to **specific pages only** — everything else is hidden from them, not just in the UI but at the database level (Postgres itself refuses to return rows for pages they weren't given access to).
+
+**One-time setup (run this after the RLS setup above):**
+
+```sql
+create table user_page_access (
+  email text not null references app_users(email) on delete cascade,
+  page_id text not null references pages(id) on delete cascade,
+  created_at timestamptz default now(),
+  primary key (email, page_id)
+);
+
+alter table user_page_access enable row level security;
+alter publication supabase_realtime add table user_page_access;
+alter table user_page_access replica identity full;
+
+-- Admin/Manager assign access for anyone; a signed-in person can also read
+-- their own assignment row (not strictly required by the app today, since
+-- Employee/Viewer never call loadAllPageAccess() themselves, but keeps the
+-- policy honest for any future screen that shows someone their own access).
+create policy "admin/manager manage access" on user_page_access for all
+  using (public.my_role() in ('admin','manager'))
+  with check (public.my_role() in ('admin','manager'));
+create policy "read own access" on user_page_access for select
+  using (email = auth.jwt() ->> 'email');
+
+-- True for Admin/Manager unconditionally, or for anyone else who has an
+-- explicit row in user_page_access for that page. SECURITY DEFINER so it
+-- can check user_page_access even though that table's own policy above
+-- would otherwise only let a non-admin see their own rows anyway — this
+-- just keeps the check in one place instead of repeating the OR in every
+-- policy below.
+create or replace function public.can_access_page(p_page_id text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    public.my_role() in ('admin','manager')
+    or exists (
+      select 1 from user_page_access
+      where page_id = p_page_id and email = auth.jwt() ->> 'email'
+    );
+$$;
+
+grant execute on function public.can_access_page(text) to authenticated;
+
+-- IMPORTANT — grandfather in everyone who already has an Employee/Viewer
+-- account: before locking reads down, give every EXISTING Employee/Viewer
+-- explicit access to every page that EXISTS RIGHT NOW. Nobody's account
+-- and no data gets touched by this — it only adds rows to the new
+-- user_page_access table, so existing Employee/Viewer users keep seeing
+-- exactly what they already see today. From this point on, this is a
+-- one-time backfill only: any NEW Employee/Viewer added after today starts
+-- with zero pages (as intended) and an Admin/Manager assigns them
+-- explicitly in Manage Users. Run this once, right here, before the policy
+-- swap below — running it again later is harmless (on conflict do
+-- nothing), but it won't un-assign anything an Admin has since narrowed
+-- down.
+insert into user_page_access (email, page_id)
+select u.email, p.id
+from app_users u
+cross join pages p
+where u.role in ('employee', 'viewer')
+on conflict (email, page_id) do nothing;
+
+-- Replace the old "any signed-in role can read everything" policies on
+-- pages/widgets/page_row_chunks with page-scoped ones. Writes are
+-- untouched (still admin/manager for pages/widgets, admin-only for row
+-- data) — this only changes what Employee/Viewer can SELECT.
+drop policy if exists "read for any signed-in role" on pages;
+create policy "read own accessible pages" on pages for select using (public.can_access_page(id));
+
+drop policy if exists "read for any signed-in role" on widgets;
+create policy "read own accessible pages" on widgets for select using (public.can_access_page(page_id));
+
+drop policy if exists "read for any signed-in role" on page_row_chunks;
+create policy "read own accessible pages" on page_row_chunks for select using (public.can_access_page(page_id));
+```
+
+**Assigning access:** in **Manage Users**, any Employee or Viewer row has a "Page access" toggle — expand it to check off exactly which teams/pages that person can see. **Existing** Employee/Viewer accounts start out fully checked (every current page — see the grandfather-in step above), so nothing changes for them the moment you run this migration; **new** Employees/Viewers added after today start with nothing checked until an Admin/Manager assigns some.
+
+**Note on `teams`:** the `teams` table itself is intentionally left readable by any signed-in role (team *names* aren't sensitive on their own) — Employee/Viewer will see every team in the sidebar, but a team none of their assigned pages belong to just shows empty when expanded. The app already filters these empty teams out of the sidebar for Employee/Viewer client-side, so in practice they only ever see teams that actually contain a page they have access to.
+
+**Without Supabase configured (local fallback mode):** there's no database to enforce this, so the same "Page access" UI in Manage Users just stores the assignment in that browser's local storage instead, and the app filters the sidebar/dashboard against it client-side — the same "client-side gate" trust model the rest of local mode already uses. Fine for a quick trial; use the real Supabase setup above for anything where this actually needs to be enforced.
+
 Everything else — Drive/Sheets connection, charts, filters, tables, Excel export, and the assistant proxy pattern — is production-ready as-is.
 
 ## Project structure

@@ -1,15 +1,20 @@
 import { showToast } from "../lib/toast";
-import { useState } from "react";
-import { Trash2, UserPlus, Globe, HardDrive } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Trash2, UserPlus, Globe, HardDrive, ChevronDown, ChevronRight, LockKeyhole } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "../lib/permissions";
+import { ROLE_LABELS, ROLE_DESCRIPTIONS, isPageAccessRestricted } from "../lib/permissions";
 import { isSupabaseConfigured } from "../lib/supabase";
-import type { Role } from "../types";
+import type { Department, Role } from "../types";
 
 const ROLES: Role[] = ["admin", "manager", "employee", "viewer"];
 
-export function UserManagement() {
-  const { users, usersLoading, addUser, updateUserRole, removeUser, usesRealAuth } = useAuth();
+interface Props {
+  departments: Department[];
+}
+
+export function UserManagement({ departments }: Props) {
+  const { users, usersLoading, addUser, updateUserRole, updatePageAccess, removeUser, usesRealAuth } = useAuth();
+  const [expandedAccess, setExpandedAccess] = useState<Set<string>>(new Set());
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<Role>("employee");
   const [newPassword, setNewPassword] = useState("");
@@ -46,6 +51,28 @@ export function UserManagement() {
         { type: "info", durationMs: 8000 }
       );
     }
+  }
+
+  function toggleAccessRow(email: string) {
+    setExpandedAccess((prev) => {
+      const next = new Set(prev);
+      next.has(email) ? next.delete(email) : next.add(email);
+      return next;
+    });
+  }
+
+  async function handlePageToggle(email: string, pageId: string, currentAccess: string[], checked: boolean) {
+    const next = checked ? [...currentAccess, pageId] : currentAccess.filter((id) => id !== pageId);
+    const result = await updatePageAccess(email, next);
+    if (!result.ok) showToast(result.message ?? "Couldn't update page access.", { type: "error" });
+  }
+
+  async function handleTeamToggle(email: string, teamPageIds: string[], currentAccess: string[], checked: boolean) {
+    const next = checked
+      ? Array.from(new Set([...currentAccess, ...teamPageIds]))
+      : currentAccess.filter((id) => !teamPageIds.includes(id));
+    const result = await updatePageAccess(email, next);
+    if (!result.ok) showToast(result.message ?? "Couldn't update page access.", { type: "error" });
   }
 
   return (
@@ -110,32 +137,110 @@ export function UserManagement() {
             <tr className="border-b border-[var(--border)]">
               <th className="text-left px-4 py-2.5 text-xs uppercase tracking-wide text-[var(--text-dim)]">Email</th>
               <th className="text-left px-4 py-2.5 text-xs uppercase tracking-wide text-[var(--text-dim)]">Role</th>
+              <th className="text-left px-4 py-2.5 text-xs uppercase tracking-wide text-[var(--text-dim)]">Page access</th>
               <th className="w-10"></th>
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.email} className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
-                <td className="px-4 py-2.5 text-[var(--text)]">{u.email}</td>
-                <td className="px-4 py-2.5">
-                  <select
-                    value={u.role}
-                    onChange={(e) => handleRoleChange(u.email, e.target.value as Role)}
-                    className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-sm"
-                  >
-                    {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                  </select>
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <button
-                    onClick={() => handleRemove(u.email)}
-                    className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {users.map((u) => {
+              const restricted = isPageAccessRestricted(u.role);
+              const isExpanded = expandedAccess.has(u.email);
+              // Local mode only: an account created before this feature
+              // existed has pageAccess === undefined, which means "sees
+              // everything, same as always" (see filterDepartmentsForUser)
+              // — reflect that here as every page checked, rather than
+              // showing a misleading "no pages assigned". The moment an
+              // Admin touches any checkbox it becomes an explicit list.
+              const isLegacyFullAccess = !usesRealAuth && u.pageAccess === undefined;
+              const access = isLegacyFullAccess
+                ? departments.flatMap((d) => d.pages.map((p) => p.id))
+                : u.pageAccess ?? [];
+              return (
+                <Fragment key={u.email}>
+                  <tr className="border-b border-[var(--border)]/50 hover:bg-[var(--panel-raised)]">
+                    <td className="px-4 py-2.5 text-[var(--text)]">{u.email}</td>
+                    <td className="px-4 py-2.5">
+                      <select
+                        value={u.role}
+                        onChange={(e) => handleRoleChange(u.email, e.target.value as Role)}
+                        className="bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-sm"
+                      >
+                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {restricted && (
+                        <button
+                          onClick={() => toggleAccessRow(u.email)}
+                          className="flex items-center gap-1 text-xs text-[var(--text-dim)] hover:text-[var(--text)] px-2 py-1 rounded-md hover:bg-[var(--panel-raised)]"
+                        >
+                          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                          <LockKeyhole size={12} />
+                          {isLegacyFullAccess
+                            ? "All pages (not yet restricted)"
+                            : access.length === 0
+                            ? "No pages assigned"
+                            : `${access.length} page${access.length === 1 ? "" : "s"}`}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => handleRemove(u.email)}
+                        className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--bad)]"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                  {restricted && isExpanded && (
+                    <tr className="border-b border-[var(--border)]/50 bg-[var(--panel-raised)]/40">
+                      <td colSpan={4} className="px-4 py-3">
+                        <p className="text-xs text-[var(--text-dim)] mb-2">
+                          Pick exactly which pages {u.email} can see. Everything else stays hidden to them.
+                        </p>
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {departments.map((d) => {
+                            const teamPageIds = d.pages.map((p) => p.id);
+                            const allChecked = teamPageIds.length > 0 && teamPageIds.every((id) => access.includes(id));
+                            return (
+                              <div key={d.id} className="text-sm">
+                                <label className="flex items-center gap-2 font-medium text-[var(--text)] cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={allChecked}
+                                    onChange={(e) => handleTeamToggle(u.email, teamPageIds, access, e.target.checked)}
+                                  />
+                                  {d.name}
+                                </label>
+                                <div className="pl-6 mt-1 space-y-1">
+                                  {d.pages.map((p) => (
+                                    <label key={p.id} className="flex items-center gap-2 text-[var(--text-dim)] cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={access.includes(p.id)}
+                                        onChange={(e) => handlePageToggle(u.email, p.id, access, e.target.checked)}
+                                      />
+                                      {p.name}
+                                    </label>
+                                  ))}
+                                  {d.pages.length === 0 && (
+                                    <p className="text-xs text-[var(--text-dim)] italic">No pages in this team yet.</p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {departments.length === 0 && (
+                            <p className="text-xs text-[var(--text-dim)] italic">No teams/pages exist yet.</p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import type { AllowedUser, Role } from "../types";
 import { getSupabase, getSupabaseForSignup, isSupabaseConfigured } from "./supabase";
 import { logActivity } from "./remoteDb";
+import { loadAllPageAccess, savePageAccessForUser } from "./pageAccess";
 
 // --- Real authentication (Supabase Auth: email + password) ---
 //
@@ -93,6 +94,7 @@ interface AuthState {
   logout: () => void;
   addUser: (email: string, role: Role, password: string) => Promise<ActionResult>;
   updateUserRole: (email: string, role: Role) => Promise<ActionResult>;
+  updatePageAccess: (email: string, pageIds: string[]) => Promise<ActionResult>;
   removeUser: (email: string) => Promise<ActionResult>;
 }
 
@@ -154,9 +156,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function refreshUsers() {
-      const list = await fetchSupabaseUsers();
+      // Fetched together so the "Manage Users" screen always renders page
+      // checkboxes against the current assignment state — the access map
+      // is a no-op (empty object) for anyone whose session isn't
+      // admin/manager (see the RLS policy on user_page_access), which is
+      // fine since only the admin-gated screen actually reads it.
+      const [list, accessMap] = await Promise.all([fetchSupabaseUsers(), loadAllPageAccess()]);
       if (!cancelled) {
-        setUsers(list);
+        setUsers(list.map((u) => ({ ...u, pageAccess: accessMap[u.email] ?? [] })));
         setUsersLoading(false);
       }
     }
@@ -165,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = supabase
       .channel("app_users_changes")
       .on("postgres_changes", { event: "*", schema: "public", table: USERS_TABLE }, refreshUsers)
+      .on("postgres_changes", { event: "*", schema: "public", table: "user_page_access" }, refreshUsers)
       .subscribe();
 
     return () => {
@@ -249,9 +257,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { error: roleError } = await supabase.from(USERS_TABLE).upsert({ email: clean, role });
         if (roleError) return { ok: false, message: roleError.message };
       }
-      setUsers((prev) => [...prev, { email: clean, role }]);
+      setUsers((prev) => [...prev, { email: clean, role, pageAccess: [] }]);
     } else {
-      setUsers((prev) => [...prev, { email: clean, role }]);
+      setUsers((prev) => [...prev, { email: clean, role, pageAccess: [] }]);
     }
     if (user?.email) logActivity(user.email, "user_added", `${clean} (${role})`);
     return { ok: true };
@@ -273,6 +281,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUsers((prev) => prev.map((u) => (u.email === email ? { ...u, role } : u)));
     if (user?.email) logActivity(user.email, "user_role_changed", `${email} → ${role}`);
+    return { ok: true };
+  }
+
+  /** Only meaningful for Employee/Viewer — Admin/Manager ignore this list
+   *  entirely and always see every page (see permissions.ts's
+   *  filterDepartmentsForUser). In real-auth mode this is what Postgres RLS
+   *  itself checks (via `can_access_page()`) before ever returning a page/
+   *  widget/row-chunk row to that person's session — not just a UI filter. */
+  async function updatePageAccess(email: string, pageIds: string[]): Promise<ActionResult> {
+    if (usesRealAuth) {
+      const result = await savePageAccessForUser(email, pageIds);
+      if (!result.ok) return result;
+    }
+    setUsers((prev) => prev.map((u) => (u.email === email ? { ...u, pageAccess: pageIds } : u)));
+    if (user?.email) logActivity(user.email, "page_access_changed", `${email} → ${pageIds.length} page(s)`);
     return { ok: true };
   }
 
@@ -306,7 +329,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, error, users, usersLoading, authReady, usesRealAuth, login, logout, addUser, updateUserRole, removeUser }}
+      value={{
+        user, error, users, usersLoading, authReady, usesRealAuth,
+        login, logout, addUser, updateUserRole, updatePageAccess, removeUser,
+      }}
     >
       {children}
     </AuthContext.Provider>

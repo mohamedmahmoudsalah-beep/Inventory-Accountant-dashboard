@@ -5,6 +5,10 @@ export type Role = "admin" | "manager" | "employee" | "viewer";
 export interface AllowedUser {
   email: string;
   role: Role;
+  /** Which page IDs this person can see — only meaningful for Employee/
+   *  Viewer (Admin/Manager always see everything regardless of this list).
+   *  Undefined/absent means "no pages assigned yet", not "all pages". */
+  pageAccess?: string[];
 }
 
 export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "radar" | "treemap";
