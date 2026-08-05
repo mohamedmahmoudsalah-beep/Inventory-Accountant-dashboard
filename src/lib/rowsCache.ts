@@ -30,6 +30,11 @@ interface CacheEntry {
   pageId: string;
   rows: DataRow[];
   cachedAt: number;
+  // The page's `lastUpdated` value this cache entry was written for. Lets a
+  // cache read detect "this page was refreshed while I wasn't looking"
+  // even before the ~6.5-day TTL — see the doc comment on
+  // getCachedPageRows below for why this matters.
+  lastUpdated: string | null;
 }
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -60,9 +65,32 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
-/** Returns a page's cached rows if present AND still under the ~6.5-day TTL,
- *  otherwise null (meaning: go fetch it from Supabase). */
-export async function getCachedPageRows(pageId: string): Promise<DataRow[] | null> {
+/** Returns a page's cached rows if present, still under the ~6.5-day TTL,
+ *  AND (when `expectedLastUpdated` is passed) written for the same version
+ *  of the page as `expectedLastUpdated` — otherwise null (meaning: go fetch
+ *  it from Supabase).
+ *
+ *  The `expectedLastUpdated` check matters for a specific case the TTL
+ *  alone can't catch: the realtime subscription (see remoteDb.ts's
+ *  subscribeToTeamsChanges) intentionally skips re-fetching rows for pages
+ *  nobody in this browser session has opened yet — otherwise every idle
+ *  browser would re-download every page touched by e.g. the weekly sync,
+ *  which is worse for egress than the problem it'd solve. That means
+ *  someone (typically an Employee/Viewer who wasn't looking at that page
+ *  during a refresh) can still be sitting on an IndexedDB cache entry from
+ *  *before* the refresh, well within the TTL, the first time they actually
+ *  open that page afterwards. Comparing against the page's current
+ *  `lastUpdated` (already fresh in memory by then — metadata changes are
+ *  never skipped the way row changes are) catches exactly that case: a
+ *  mismatch means "this cache predates the last refresh", so it's treated
+ *  as a miss even though the TTL clock hasn't run out.
+ *
+ *  Pass `undefined` (not `null`) for `expectedLastUpdated` to skip this
+ *  check entirely and rely on the TTL alone. */
+export async function getCachedPageRows(
+  pageId: string,
+  expectedLastUpdated?: string | null
+): Promise<DataRow[] | null> {
   const db = await openDb();
   if (!db) return null;
   return new Promise((resolve) => {
@@ -73,6 +101,7 @@ export async function getCachedPageRows(pageId: string): Promise<DataRow[] | nul
         const entry = req.result as CacheEntry | undefined;
         if (!entry) return resolve(null);
         if (Date.now() - entry.cachedAt > TTL_MS) return resolve(null); // stale — treat as a miss
+        if (expectedLastUpdated !== undefined && entry.lastUpdated !== expectedLastUpdated) return resolve(null); // refreshed since this was cached
         resolve(entry.rows);
       };
       req.onerror = () => resolve(null);
@@ -82,18 +111,19 @@ export async function getCachedPageRows(pageId: string): Promise<DataRow[] | nul
   });
 }
 
-/** Writes (or overwrites) a page's cached rows with a fresh timestamp.
- *  Called after every successful Supabase fetch, every realtime-pushed
- *  update, and every manual "Refresh data" — so the cache is always
- *  write-through, never the thing standing between a person and data they
- *  just explicitly asked to see fresh. */
-export async function setCachedPageRows(pageId: string, rows: DataRow[]): Promise<void> {
+/** Writes (or overwrites) a page's cached rows with a fresh timestamp,
+ *  tagged with the page's `lastUpdated` value at the time of writing (see
+ *  getCachedPageRows for why). Called after every successful Supabase
+ *  fetch, every realtime-pushed update, and every manual "Refresh data" —
+ *  so the cache is always write-through, never the thing standing between
+ *  a person and data they just explicitly asked to see fresh. */
+export async function setCachedPageRows(pageId: string, rows: DataRow[], lastUpdated: string | null = null): Promise<void> {
   const db = await openDb();
   if (!db) return;
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(STORE_NAME, "readwrite");
-      tx.objectStore(STORE_NAME).put({ pageId, rows, cachedAt: Date.now() } satisfies CacheEntry);
+      tx.objectStore(STORE_NAME).put({ pageId, rows, cachedAt: Date.now(), lastUpdated } satisfies CacheEntry);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     } catch {

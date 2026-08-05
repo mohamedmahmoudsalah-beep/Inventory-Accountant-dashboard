@@ -8,6 +8,7 @@ import { Download, Trash2, Settings2 } from "lucide-react";
 import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { parseNumeric, formatNumber } from "../lib/numeric";
+import { ExplainButton } from "./ExplainButton";
 
 const COLORS = ["#c81e94", "#57c99a", "#e94fb0", "#7aa2e8", "#f2b807", "#8a5fd6"];
 
@@ -20,11 +21,21 @@ interface Props {
   onChange: (config: ChartConfig) => void;
   onRemove: () => void;
   onCrossFilter?: (column: string, value: string) => void;
+  /** Department/team name, used only to give the AI explain button a bit
+   *  more context — purely cosmetic if omitted. */
+  deptName?: string;
 }
 
 const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
 
-export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter }: Props) {
+function explainChartPrompt(config: ChartConfig): string {
+  const rankingNote = config.sortDir
+    ? ` وعارض بس ${config.sortDir === "desc" ? "أعلى" : "أقل"} قيم من ${config.rangeStart ?? 1} لحد ${config.rangeEnd ?? "آخر النتائج"}.`
+    : "";
+  return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي شارت "${config.title}" ده (نوعه ${config.type}) بيعمله بالظبط: هو بيوريله محور "${config.xKey || "غير محدد"}" مقابل "${config.yKey || "غير محدد"}".${rankingNote} وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدة الشارت ده تحديدًا له في شغله، في 3 إلى 4 جمل بسيطة وقصيرة.`;
+}
+
+export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter, deptName = "" }: Props) {
   // Starts open for a brand-new chart (no columns picked yet) so the person
   // is dropped straight into picking them, instead of the chart silently
   // guessing the first two columns.
@@ -84,6 +95,10 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           <h3 className="text-sm">{config.title}</h3>
         )}
         <div className="flex items-center gap-1 shrink-0">
+          <ExplainButton
+            prompt={explainChartPrompt(config)}
+            context={{ departmentName: deptName, rows, columns }}
+          />
           {canExport && (
             <button
               onClick={() => exportRowsToExcel(aggregated, config.title.replace(/\s+/g, "_"))}

@@ -366,7 +366,7 @@ function DashboardApp() {
     pageRowsAttemptedRef.current.add(pageId);
     let cancelled = false;
     (async () => {
-      const rows = await loadPageRows(pageId);
+      const rows = await loadPageRows(pageId, false, activePage.lastUpdated ?? null);
       if (cancelled) return;
       if (rows === null) {
         pageRowsAttemptedRef.current.delete(pageId); // failed — allow a retry (e.g. if you switch away and back)
@@ -1096,6 +1096,7 @@ function DashboardApp() {
               filters={activePage.activeFilters}
               onChange={setFilters}
               readOnly={!canFilter}
+              deptName={activeDept.name}
             />
 
             <div id="dashboard-page-content" className="p-6 space-y-4">
@@ -1140,6 +1141,7 @@ function DashboardApp() {
                             canEdit={canEdit} canExport={canExportData}
                             onChange={updateChart} onRemove={() => removeChart(w.item.id)}
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
+                            deptName={activeDept.name}
                           />
                         </WidgetShell>
                       );
@@ -1153,6 +1155,7 @@ function DashboardApp() {
                             onChange={updatePivot} onRemove={() => removePivot(w.item.id)}
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
                             activeFilters={activePage.activeFilters}
+                            deptName={activeDept.name}
                           />
                         </WidgetShell>
                       );
@@ -1166,6 +1169,7 @@ function DashboardApp() {
                             onChange={updateMatrix} onRemove={() => removeMatrix(w.item.id)}
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
                             activeFilters={activePage.activeFilters}
+                            deptName={activeDept.name}
                           />
                         </WidgetShell>
                       );

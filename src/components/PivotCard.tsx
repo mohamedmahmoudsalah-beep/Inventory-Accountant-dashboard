@@ -7,6 +7,7 @@ import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
 import { applyWidgetFilter } from "../lib/widgetFilter";
 import { WidgetFilterControl } from "./WidgetFilterControl";
+import { ExplainButton } from "./ExplainButton";
 
 interface Props {
   config: PivotConfig;
@@ -21,6 +22,9 @@ interface Props {
    *  by that value — the same cross-filtering Chart already has. */
   onCrossFilter?: (column: string, value: string) => void;
   activeFilters?: FilterConfig[];
+  /** Department/team name, used only to give the AI explain button a bit
+   *  more context — purely cosmetic if omitted. */
+  deptName?: string;
 }
 
 function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measure[]): number {
@@ -33,7 +37,15 @@ function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measur
   return computeMeasureValue(measure, rows, measures);
 }
 
-export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
+function explainPivotPrompt(config: PivotConfig): string {
+  const groupCols = config.groupCols.filter(Boolean).join("، ") || "من غير أعمدة تجميع لسه";
+  const values = config.values.map((v) => v.label).join("، ") || "من غير قيم متحددة لسه";
+  const rangeLabel = `الترتيب من ${config.rangeStart} لحد ${config.rangeEnd}`;
+  const sortLabel = config.sortDir === "desc" ? "الأعلى قيمة الأول" : "الأقل قيمة الأول";
+  return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي الجدول المحوري (Pivot) اسمه "${config.title}" ده بيعمله بالظبط: هو بيجمّع صفوف البيانات حسب "${groupCols}"، وبيحسبلها القيم دي: "${values}"، ومرتبها ${sortLabel}، وعارض ${rangeLabel}. وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدة الجدول ده تحديدًا له في شغله، في 4 إلى 5 جمل بسيطة وقصيرة.`;
+}
+
+export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "" }: Props) {
   const [showEditor, setShowEditor] = useState(false);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -129,6 +141,10 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
           <h3 className="text-sm">{config.title}</h3>
         )}
         <div className="flex items-center gap-1 shrink-0">
+          <ExplainButton
+            prompt={explainPivotPrompt(config)}
+            context={{ departmentName: deptName, rows, columns }}
+          />
           {canExport && (
             <button onClick={() => exportRowsToExcel(exportRows, config.title.replace(/\s+/g, "_"))} title="Export to Excel"
               className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">

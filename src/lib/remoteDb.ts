@@ -281,14 +281,18 @@ function buildDepartments(
  *  read anyone else's data just because one page's sheet was refreshed.
  *
  *  Checks the client-side IndexedDB cache first (see rowsCache.ts, ~6.5-day
- *  TTL) — since the shared data only actually changes once a week, most
- *  calls to this never need to touch the network at all. Pass
- *  `bypassCache: true` (used by the "Refresh data" flow) to force a real
- *  Supabase read regardless of what's cached, e.g. right after writing new
- *  rows so the cache doesn't look stale to the person who just refreshed. */
-export async function loadPageRows(pageId: string, bypassCache = false): Promise<DataRow[] | null> {
+ *  TTL, plus a `lastUpdated` version check) — since the shared data only
+ *  actually changes once a week, most calls to this never need to touch
+ *  the network at all. Pass `expectedLastUpdated` (the page's current
+ *  `lastUpdated` from `pages`/`departments` state, if known) so a cache
+ *  entry written before the last refresh is correctly treated as stale
+ *  even though the TTL hasn't expired yet. Pass `bypassCache: true` (used
+ *  by the "Refresh data" flow) to force a real Supabase read regardless of
+ *  what's cached, e.g. right after writing new rows so the cache doesn't
+ *  look stale to the person who just refreshed. */
+export async function loadPageRows(pageId: string, bypassCache = false, expectedLastUpdated?: string | null): Promise<DataRow[] | null> {
   if (!bypassCache) {
-    const cached = await getCachedPageRows(pageId);
+    const cached = await getCachedPageRows(pageId, expectedLastUpdated);
     if (cached !== null) return cached;
   }
 
@@ -313,7 +317,7 @@ export async function loadPageRows(pageId: string, bypassCache = false): Promise
     if (!data || data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
-  setCachedPageRows(pageId, all); // write-through, so the next load (this session or tomorrow, within 24h) skips the network entirely
+  setCachedPageRows(pageId, all, expectedLastUpdated ?? null); // write-through, tagged with the version just fetched, so the next load (this session or tomorrow, within the TTL) skips the network entirely
   return all;
 }
 
@@ -407,7 +411,8 @@ export async function deleteTeamRemote(id: string): Promise<void> {
 async function saveRowsRemote(
   pageId: string,
   rows: DataRow[],
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  lastUpdated: string | null = null
 ): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return true;
@@ -445,7 +450,7 @@ async function saveRowsRemote(
       // the cache (see rowsCache.ts) — write the just-saved rows straight in
       // so this same browser sees them as fresh immediately, instead of
       // waiting out whatever was cached before this refresh.
-      setCachedPageRows(pageId, rows);
+      setCachedPageRows(pageId, rows, lastUpdated);
       return true;
     } catch (e) {
       warnSaveFailedOnce("this page's data (a chunk of rows)", e);
@@ -499,7 +504,7 @@ export async function savePageRemote(
   });
   if (!pageWriteOk) return; // don't bother writing rows if the page's own row failed
 
-  if (shouldIncludeRows) await saveRowsRemote(page.id, page.rows, onRowSaveProgress);
+  if (shouldIncludeRows) await saveRowsRemote(page.id, page.rows, onRowSaveProgress, page.lastUpdated ?? null);
 }
 
 export async function deletePageRemote(id: string): Promise<void> {
@@ -612,7 +617,14 @@ export function subscribeToTeamsChanges(
       pageId,
       setTimeout(async () => {
         rowsTimers.delete(pageId);
-        const rows = await loadPageRows(pageId, true); // bypassCache: this IS the change, no point checking a now-stale cache first
+        // Best-known lastUpdated at fetch time — tags the cache write so a
+        // later viewer's freshness check (see rowsCache.ts) has something
+        // to compare against. If the `pages` metadata realtime event for
+        // this same refresh hasn't landed yet, this may still be the old
+        // value; worst case that just costs one extra, still-correct
+        // refetch down the line, never stale data shown.
+        const knownLastUpdated = getCurrentDepartments().flatMap((d) => d.pages).find((p) => p.id === pageId)?.lastUpdated ?? null;
+        const rows = await loadPageRows(pageId, true, knownLastUpdated); // bypassCache: this IS the change, no point checking a now-stale cache first
         if (rows === null) return; // read failed — leave whatever's currently shown alone
         onChange(
           getCurrentDepartments().map((d) => ({

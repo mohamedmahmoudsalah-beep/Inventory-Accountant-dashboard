@@ -394,7 +394,7 @@ Since the shared data only actually changes once a week (the Sunday-noon sync), 
 - **"Refresh data"** (and the background weekly / on-login sync) is the one thing that bypasses the cache and writes the newly-fetched rows straight back into it, so a manual refresh is never left looking stale.
 - The realtime subscription also **skips reloading a page's rows for a browser that never had that page open in the first place** — previously, every connected browser (including people not even looking at the affected page) would re-download full row data for every page touched by e.g. the weekly sync, which is a much bigger source of unnecessary egress than any one person's own navigation.
 
-**One trade-off worth knowing:** with a ~6.5-day cache, if the Admin does a manual mid-week "Refresh data," anyone who *already has that page open* gets the update instantly via the realtime subscription (which always bypasses the cache). But someone who opens that page for the first time *that week* later on will see their own last-cached copy until it naturally goes stale, rather than always getting the absolute latest write — a deliberate trade for the egress savings, matching a once-a-week data cadence.
+**One trade-off worth knowing:** with a ~6.5-day cache, if the Admin does a manual mid-week "Refresh data," anyone who *already has that page open* gets the update instantly via the realtime subscription (which always bypasses the cache). Someone who opens that page for the first time *after* the refresh gets it too — the cache entry is tagged with the page's `lastUpdated` at write time, so a mismatch against the current value is treated as a miss even though the TTL hasn't expired, and the app quietly re-fetches instead of showing an old cached copy under a new "Last updated" timestamp.
 
 No SQL or setup needed for this part — it's automatic once this version is deployed. If you ever need to clear it (e.g. testing), it's in the browser's DevTools → Application → IndexedDB → `breadfast-dashboard-cache`.
 
@@ -506,6 +506,14 @@ To enable it on Vercel:
 - Is `GEMINI_API_KEY` set in Vercel's **Environment Variables** (not just your local `.env`)? Did you redeploy after adding it?
 - Check **Vercel → your project → Deployments → (latest) → Functions/Logs** for the actual error message from `api/assistant.js` — it's usually more specific than what shows in the chat panel.
 - Make sure the `model` value in `api/assistant.js` is a real, current model name (check [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) for the current list) — an outdated or mistyped model name will make every request fail with a 400/404 error.
+
+### "Explain this" buttons on filters, charts, pivots, and matrices
+
+Every active filter (in the filter bar) and every Chart/Pivot/Matrix widget has a small ✨ button in its header, separate from the full **AI Assistant** panel. Clicking it asks the same `/api/assistant` endpoint above (so it needs the same one-time setup) a question built automatically from that exact filter/widget's own configuration — which column, which value/aggregation/grouping — and always answers in plain, non-technical Arabic.
+
+Unlike the full Assistant panel (Admin/Manager/Employee only — Viewer is excluded there, see "Roles & permissions"), these buttons are available to **every role, including Viewer**: they only ever explain something already visible on screen, never open a general chat, so there's nothing extra being exposed by letting everyone use them.
+
+If `/api/assistant` isn't set up yet, these buttons show the same "couldn't reach the assistant backend" message as the main panel — the setup above covers both.
 
 ## Real authentication & Row Level Security (implemented)
 

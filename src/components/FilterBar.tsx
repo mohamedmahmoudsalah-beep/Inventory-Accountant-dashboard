@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X, CalendarRange } from "lucide-react";
 import type { DataRow, FilterConfig } from "../types";
+import { ExplainButton } from "./ExplainButton";
 
 interface Props {
   columns: string[];
@@ -8,9 +9,19 @@ interface Props {
   filters: FilterConfig[];
   onChange: (filters: FilterConfig[]) => void;
   readOnly?: boolean;
+  /** Department/team name, used only to give the AI explain button a bit
+   *  more context — purely cosmetic if omitted. */
+  deptName?: string;
 }
 
-export function FilterBar({ columns, rows, filters, onChange, readOnly = false }: Props) {
+function explainFilterPrompt(f: FilterConfig): string {
+  if (f.mode === "range") {
+    return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي فلتر "المدى الزمني" ده بيعمله بالظبط: هو بيفلتر عمود "${f.column}" من ${f.from || "بداية غير محددة"} لحد ${f.to || "نهاية غير محددة"}. وضّح تأثيره على البيانات الظاهرة في الصفحة دلوقتي، وإيه الفايدة منه، في 3 إلى 4 جمل بسيطة وقصيرة.`;
+  }
+  return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي الفلتر ده بيعمله بالظبط: هو بيفلتر عمود "${f.column}" على القيمة "${f.value}"${f.value === "All" ? " (يعني من غير أي فلترة فعلية على العمود ده دلوقتي)" : ""}. وضّح تأثيره على البيانات الظاهرة في الصفحة دلوقتي، وإيه الفايدة منه، في 3 إلى 4 جمل بسيطة وقصيرة.`;
+}
+
+export function FilterBar({ columns, rows, filters, onChange, readOnly = false, deptName = "" }: Props) {
   const [showAddMenu, setShowAddMenu] = useState(false);
 
   function addFilter() {
@@ -97,6 +108,10 @@ export function FilterBar({ columns, rows, filters, onChange, readOnly = false }
               <X size={13} />
             </button>
           )}
+          <ExplainButton
+            prompt={explainFilterPrompt(f)}
+            context={{ departmentName: deptName, rows, columns }}
+          />
         </div>
       ))}
 

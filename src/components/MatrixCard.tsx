@@ -7,6 +7,7 @@ import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
 import { applyWidgetFilter } from "../lib/widgetFilter";
 import { WidgetFilterControl } from "./WidgetFilterControl";
+import { ExplainButton } from "./ExplainButton";
 
 interface Props {
   config: MatrixConfig;
@@ -21,6 +22,9 @@ interface Props {
    *  by that value — the same cross-filtering Chart already has. */
   onCrossFilter?: (column: string, value: string) => void;
   activeFilters?: FilterConfig[];
+  /** Department/team name, used only to give the AI explain button a bit
+   *  more context — purely cosmetic if omitted. */
+  deptName?: string;
 }
 
 function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): number {
@@ -33,7 +37,16 @@ function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): 
   return computeMeasureValue(measure, rows, measures);
 }
 
-export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [] }: Props) {
+function explainMatrixPrompt(config: MatrixConfig, measures: Measure[]): string {
+  const source = config.value;
+  const valueLabel =
+    source.kind === "column"
+      ? `${source.agg} على عمود "${source.column}"`
+      : `المقياس (Measure) "${measures.find((m) => m.id === source.measureId)?.name ?? source.measureId}"`;
+  return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي جدول المصفوفة (Matrix) اسمه "${config.title}" ده بيعمله بالظبط: هو بيوري تقاطع "${config.rowCol}" في الصفوف مع "${config.colCol}" في الأعمدة، وكل خلية فيه قيمتها هي ${valueLabel}. وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدته تحديدًا في شغله، في 3 إلى 4 جمل بسيطة وقصيرة.`;
+}
+
+export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "" }: Props) {
   // Starts open for a brand-new matrix (no columns picked yet), same as Chart.
   const [showEditor, setShowEditor] = useState(
     !config.rowCol || !config.colCol || (config.value.kind === "column" && !config.value.column)
@@ -86,6 +99,10 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
           <h3 className="text-sm">{config.title}</h3>
         )}
         <div className="flex items-center gap-1 shrink-0">
+          <ExplainButton
+            prompt={explainMatrixPrompt(config, measures)}
+            context={{ departmentName: deptName, rows, columns }}
+          />
           {canExport && (
             <button onClick={() => exportRowsToExcel(exportRows, config.title.replace(/\s+/g, "_"))} title="Export to Excel"
               className="p-1.5 rounded-md text-[var(--text-dim)] hover:bg-[var(--panel-raised)] hover:text-[var(--text-h)]">
