@@ -112,3 +112,47 @@ export function mergeTables(
 
   return { columns, rows };
 }
+
+export interface LookupJoin {
+  table: ParsedFile;
+  baseKey: string; // column in `base` (or an earlier lookup's added columns — see note below)
+  otherKey: string; // column in `table`
+}
+
+/**
+ * Joins any number of "lookup" sheets onto one base/main sheet — the
+ * classic "one big sheet + a couple of reference sheets" shape (e.g. a
+ * transactions sheet, plus a branches sheet, plus a products sheet, each
+ * linked onto transactions by its own ID column). Every lookup is matched
+ * against `base`'s own columns (never against another lookup's columns),
+ * which keeps the join unambiguous and lets lookups be added/removed/
+ * reordered independently in the UI without re-picking earlier keys.
+ *
+ * For a true chain (sheet C only has a key that lives in sheet B, not in
+ * the base sheet), join B onto the base first, apply it, then re-open
+ * Import → Merge with the *result* as the new base and C as the lookup —
+ * two passes covers that case without needing more UI complexity here.
+ */
+export function mergeManyTables(base: ParsedFile, lookups: LookupJoin[]): { columns: string[]; rows: DataRow[] } {
+  let columns = [...base.columns];
+  const rows: DataRow[] = base.rows.map((r) => ({ ...r }));
+
+  lookups.forEach(({ table, baseKey, otherKey }) => {
+    const byKey = new Map<string, DataRow>();
+    table.rows.forEach((r) => byKey.set(String(r[otherKey]), r));
+
+    const extraCols = table.columns.filter((c) => c !== otherKey);
+    const suffix = `_${table.fileName.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "") || "linked"}`;
+    const renamed = extraCols.map((c) => (columns.includes(c) ? `${c}${suffix}` : c));
+    columns = [...columns, ...renamed];
+
+    rows.forEach((row) => {
+      const match = byKey.get(String(row[baseKey]));
+      extraCols.forEach((c, i) => {
+        row[renamed[i]] = match ? match[c] ?? "" : "";
+      });
+    });
+  });
+
+  return { columns, rows };
+}

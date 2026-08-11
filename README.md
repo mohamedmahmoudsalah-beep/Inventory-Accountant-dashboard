@@ -460,10 +460,14 @@ Either way, click **Refresh data** any time the underlying sheet changes.
 
 ## Importing Excel/CSV files directly
 
-Click **Import file** on any task page (no Google account needed for this one). Three modes:
-- **Replace** — upload one `.xlsx`/`.xls`/`.csv` file; it becomes the page's data.
-- **Append (stack rows)** — upload several files; their rows get combined into one table (columns don't need to match exactly — mismatched ones are filled with blanks).
-- **Merge (join)** — upload two files and pick the matching column in each (e.g. "Employee ID" in both); columns from the second file get added onto the first file's rows, like a VLOOKUP/left join.
+Click **Import file** on any task page. Three modes, each also accepts a pasted Google Sheet link as a source alongside (or instead of) uploaded files — no separate "Google account needed" distinction anymore:
+- **Replace** — upload one `.xlsx`/`.xls`/`.csv` file, or paste one Google Sheet link; it becomes the page's data.
+- **Append (stack rows)** — upload several files and/or paste several Google Sheet links; their rows get combined into one table (columns don't need to match exactly — mismatched ones are filled with blanks).
+- **Merge (join)** — pick one base/main sheet (file or link), then link any number of other sheets (files or links) onto it by a matching column each — e.g. a "Branch ID" column in the base sheet matched against "ID" in a branches sheet, and separately a "Product ID" column matched against a products sheet. Every linked sheet's other columns get added onto the base sheet's rows, like a VLOOKUP/left join done any number of times.
+
+  This is a **star join**: every linked sheet is matched directly against the base sheet's own columns, not against another linked sheet's columns — covers the common "one main sheet + a few reference/lookup sheets" shape. If sheet C's key only exists in sheet B (not in the base sheet) — a true A→B→C chain — merge A+B first, apply it, then reopen Import → Merge using that result as the new base sheet and C as the linked sheet. Two passes covers that without extra UI complexity.
+
+  Once merged, the page still behaves exactly like any other page (one flat table) — Page-level access, the row cache, Measures/Calculated Columns, and everything else in this README work on it exactly the same way, since none of them care where the rows originally came from.
 
 ## Charts available
 
@@ -688,6 +692,32 @@ create policy "read own accessible pages" on page_row_chunks for select using (p
 **Note on `teams`:** the `teams` table itself is intentionally left readable by any signed-in role (team *names* aren't sensitive on their own) — Employee/Viewer will see every team in the sidebar, but a team none of their assigned pages belong to just shows empty when expanded. The app already filters these empty teams out of the sidebar for Employee/Viewer client-side, so in practice they only ever see teams that actually contain a page they have access to.
 
 **Without Supabase configured (local fallback mode):** there's no database to enforce this, so the same "Page access" UI in Manage Users just stores the assignment in that browser's local storage instead, and the app filters the sidebar/dashboard against it client-side — the same "client-side gate" trust model the rest of local mode already uses. Fine for a quick trial; use the real Supabase setup above for anything where this actually needs to be enforced.
+
+**Troubleshooting "an Employee/Viewer still sees everything even after assigning specific pages":** `drop policy if exists` succeeds silently even when nothing matched — so if an earlier draft of this project's SQL left a differently-named permissive SELECT policy on `pages`/`widgets`/`page_row_chunks` (Postgres OR's every matching policy together, so *any* permissive one being present is enough to leak full access), the drop above wouldn't have removed it. Run this once in the SQL Editor to see exactly what's active:
+```sql
+select tablename, policyname, cmd
+from pg_policies
+where tablename in ('pages', 'widgets', 'page_row_chunks')
+order by tablename, policyname;
+```
+If a SELECT policy other than `"read own accessible pages"` shows up for any of these three tables, clear the slate and recreate just the intended one:
+```sql
+do $$
+declare pol record;
+begin
+  for pol in
+    select policyname, tablename from pg_policies
+    where tablename in ('pages', 'widgets', 'page_row_chunks') and cmd = 'SELECT'
+  loop
+    execute format('drop policy %I on %I', pol.policyname, pol.tablename);
+  end loop;
+end $$;
+
+create policy "read own accessible pages" on pages for select using (public.can_access_page(id));
+create policy "read own accessible pages" on widgets for select using (public.can_access_page(page_id));
+create policy "read own accessible pages" on page_row_chunks for select using (public.can_access_page(page_id));
+```
+This only touches SELECT policies on these three tables — writes and every other table are untouched, and no data is affected.
 
 Everything else — Drive/Sheets connection, charts, filters, tables, Excel export, and the assistant proxy pattern — is production-ready as-is.
 
