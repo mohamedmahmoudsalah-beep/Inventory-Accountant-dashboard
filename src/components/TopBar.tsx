@@ -12,9 +12,10 @@ import {
   type SheetTab,
 } from "../lib/googleDrive";
 import { extractSheetId, fetchMultipleSheets } from "../lib/sheets";
-import { appendTables } from "../lib/importFiles";
+import type { ParsedFile } from "../lib/importFiles";
 import { ImportPanel } from "./ImportPanel";
 import { SheetTabPicker } from "./SheetTabPicker";
+import { CombineSheetsModal } from "./CombineSheetsModal";
 
 interface Props {
   page: TaskPage;
@@ -46,6 +47,7 @@ export function TopBar({
   const [pickerBusy, setPickerBusy] = useState(false);
   const [combineBusy, setCombineBusy] = useState(false);
   const [tabPicker, setTabPicker] = useState<{ fileName: string; url: string; tabs: SheetTab[] } | null>(null);
+  const [combineChoice, setCombineChoice] = useState<{ tables: ParsedFile[] } | null>(null);
 
   function reportError(e: unknown, fallback: string) {
     const msg = e instanceof Error ? e.message : "";
@@ -114,8 +116,7 @@ export function TopBar({
         return;
       }
       const tables = await fetchMultipleSheets(picked);
-      const { rows, columns } = appendTables(tables);
-      onImportData(rows, columns);
+      setCombineChoice({ tables });
     } catch (e) {
       reportError(e, "Couldn't combine those sheets");
     } finally {
@@ -273,6 +274,14 @@ export function TopBar({
             onConnectSheet(tabPicker.url, tabTitle, "drive");
             setTabPicker(null);
           }}
+        />
+      )}
+
+      {combineChoice && (
+        <CombineSheetsModal
+          tables={combineChoice.tables}
+          onApply={(rows, columns) => onImportData(rows, columns)}
+          onClose={() => setCombineChoice(null)}
         />
       )}
     </div>

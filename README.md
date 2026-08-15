@@ -117,7 +117,7 @@ The app used to push a full save to the shared database on almost every small ed
 - **Data persists across reloads** — teams, pages, charts, pivots, and filters are saved to your browser's local storage automatically.
 - **Google Drive sign-in is cached for the session** — you won't be asked to sign in again on every page reload (it still expires after about an hour, or if you close the tab, since access tokens shouldn't live forever).
 - **Pick a specific tab** when connecting a spreadsheet via "Browse from Drive" — if it has more than one tab, you'll be asked which one to load.
-- **Combine online sheets** — a new button lets you multi-select several Google Sheets from Drive and stack their rows into one table (same idea as the file-based "Append", but without downloading anything first).
+- **Combine online sheets** — a button that lets you multi-select several Google Sheets from Drive at once. After picking them, you're asked one simple question: put them together normally (stack every sheet's rows into one table — the default, same as before), or link them by a relationship instead (pick a matching column between the first sheet and each of the others, like a VLOOKUP) — entirely optional, right there in the same step, no separate panel to dig through.
 - **Data Sources page** — a new sidebar item showing, for every team and page, exactly where its data comes from (Drive / pasted link / uploaded file) and when it was last refreshed.
 - **Pivot tables** — group by 1–2 columns, aggregate a value column (sum/avg/count/min/max), and show only the Top N or Bottom N groups.
 - **Date range filter** — add a "from / to" date slicer alongside the existing dropdown filters.
