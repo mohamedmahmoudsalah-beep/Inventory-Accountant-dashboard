@@ -460,14 +460,18 @@ Either way, click **Refresh data** any time the underlying sheet changes.
 
 ## Importing Excel/CSV files directly
 
-Click **Import file** on any task page. Three modes, each also accepts a pasted Google Sheet link as a source alongside (or instead of) uploaded files — no separate "Google account needed" distinction anymore:
+Click **Import file** on any task page. Three modes:
 - **Replace** — upload one `.xlsx`/`.xls`/`.csv` file, or paste one Google Sheet link; it becomes the page's data.
 - **Append (stack rows)** — upload several files and/or paste several Google Sheet links; their rows get combined into one table (columns don't need to match exactly — mismatched ones are filled with blanks).
-- **Merge (join)** — pick one base/main sheet (file or link), then link any number of other sheets (files or links) onto it by a matching column each — e.g. a "Branch ID" column in the base sheet matched against "ID" in a branches sheet, and separately a "Product ID" column matched against a products sheet. Every linked sheet's other columns get added onto the base sheet's rows, like a VLOOKUP/left join done any number of times.
+- **Merge (join)** — combines a main table with one or more others by a matching column, like a VLOOKUP/left join done any number of times. Two ways to feed it, picked with a small switch at the top of this mode:
+  - **"Tabs in one Google Sheet"** (the easy, common case) — paste one spreadsheet link, click **List tabs**, pick which tab is the main table, then pick any other tabs *in that same spreadsheet* to link onto it (e.g. a "Products" tab matched by a product ID column). No need to paste the same link more than once or juggle separate files — everything comes from the one sheet you already have.
+  - **"Separate files"** — the older flow: upload a base file, then upload other files to link onto it, for when the data genuinely lives in different files rather than tabs of one sheet.
 
-  This is a **star join**: every linked sheet is matched directly against the base sheet's own columns, not against another linked sheet's columns — covers the common "one main sheet + a few reference/lookup sheets" shape. If sheet C's key only exists in sheet B (not in the base sheet) — a true A→B→C chain — merge A+B first, apply it, then reopen Import → Merge using that result as the new base sheet and C as the linked sheet. Two passes covers that without extra UI complexity.
+  Either way, every linked sheet/file is matched directly against the **base table's own columns** (not against another linked sheet's columns) — covers "one main sheet + a few reference/lookup sheets" cleanly. If sheet C's key only exists in sheet B (a true chain, not a star), merge A+B first, apply it, then reopen Import → Merge using that result as the new base and C as the linked one.
 
-  Once merged, the page still behaves exactly like any other page (one flat table) — Page-level access, the row cache, Measures/Calculated Columns, and everything else in this README work on it exactly the same way, since none of them care where the rows originally came from.
+  Once merged, the page behaves exactly like any other page (one flat table) — Page-level access, the row cache, Measures/Calculated Columns, and everything else in this README work on it the same way, since none of them care where the rows originally came from.
+
+  "List tabs" needs Google Drive connected (see "Connecting data" below) — it calls the Sheets API to read the spreadsheet's tab names, same as picking a tab when connecting a page's main data source.
 
 ## Charts available
 
