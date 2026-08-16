@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import type { ParsedFile, LookupJoin } from "../lib/importFiles";
-import { appendTables, mergeManyTables } from "../lib/importFiles";
+import { appendTables, mergeManyTables, aggregateForJoin } from "../lib/importFiles";
 import type { DataRow } from "../types";
+import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
 
 interface Props {
   tables: ParsedFile[]; // already fetched — tables[0] is treated as the main sheet if "link" is chosen
@@ -11,11 +12,6 @@ interface Props {
 }
 
 type Choice = "stack" | "link";
-
-interface Link {
-  baseKey: string;
-  otherKey: string;
-}
 
 /** The simple "how should these sheets go together?" step shown right
  *  after picking 2+ sheets from Drive in "Combine online sheets" — this is
@@ -26,22 +22,31 @@ interface Link {
  *  relationships between the sheets instead. */
 export function CombineSheetsModal({ tables, onApply, onClose }: Props) {
   const [choice, setChoice] = useState<Choice>("stack");
-  const [links, setLinks] = useState<Link[]>(tables.slice(1).map(() => ({ baseKey: "", otherKey: "" })));
+  const [links, setLinks] = useState<KeyPair[][]>(tables.slice(1).map(() => [{ baseKey: "", otherKey: "" }]));
 
   const base = tables[0];
-  const canApply = choice === "stack" || links.every((l) => l.baseKey && l.otherKey);
-
-  function updateLink(i: number, patch: Partial<Link>) {
-    setLinks((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  }
+  const canApply = choice === "stack" || links.every((pairs) => pairs.every((p) => p.baseKey && p.otherKey));
 
   function apply() {
     if (choice === "stack") {
       const { rows, columns } = appendTables(tables);
       onApply(rows, columns);
     } else {
-      const joins: LookupJoin[] = tables.slice(1).map((table, i) => ({ table, baseKey: links[i].baseKey, otherKey: links[i].otherKey }));
-      const { rows, columns } = mergeManyTables(base, joins);
+      // Every side gets collapsed to one row per its own matching key(s)
+      // first — a no-op when a side already has unique keys, and exactly
+      // what prevents a value from getting copied onto more rows than it
+      // should (and any SUM over it coming out inflated) when a side
+      // naturally has several rows per key, e.g. several transactions on
+      // the same day for the same item. Always on — there's no case where
+      // linking un-aggregated data directly is the right call.
+      const baseKeyColumns = [...new Set(links.flatMap((pairs) => pairs.map((p) => p.baseKey)))];
+      const aggregatedBase = aggregateForJoin(base, baseKeyColumns);
+      const joins: LookupJoin[] = tables.slice(1).map((table, i) => ({
+        table: aggregateForJoin(table, links[i].map((p) => p.otherKey)),
+        baseKeys: links[i].map((p) => p.baseKey),
+        otherKeys: links[i].map((p) => p.otherKey),
+      }));
+      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
       onApply(rows, columns);
     }
     onClose();
@@ -49,7 +54,7 @@ export function CombineSheetsModal({ tables, onApply, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-5 w-full max-w-md">
+      <div className="bg-[var(--panel)] border border-[var(--border)] rounded-xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm">{tables.length} sheets picked — how should they go together?</h3>
           <button onClick={onClose} className="text-[var(--text-dim)] hover:text-[var(--text-h)]">
@@ -77,39 +82,28 @@ export function CombineSheetsModal({ tables, onApply, onClose }: Props) {
             }`}
           >
             <span className="font-medium text-[var(--text-h)]">Link them by a relationship (optional)</span>
-            <p className="text-xs mt-0.5">Pick a matching column between "{base.fileName}" and each other sheet — like a VLOOKUP.</p>
+            <p className="text-xs mt-0.5">Pick matching column(s) between "{base.fileName}" and each other sheet — like a VLOOKUP.</p>
           </button>
         </div>
 
         {choice === "link" && (
           <div className="space-y-3 mb-4">
+            <p className="text-[11px] text-[var(--text-dim)] -mt-2">
+              Rows sharing the same matching value(s) get totaled together automatically before linking (e.g. several transactions on the
+              same day for the same item become one summed row) — so matching by more than one column together (e.g. Product AND Day) still
+              gives you correct totals even when either sheet has several rows per key.
+            </p>
             {tables.slice(1).map((t, i) => (
               <div key={i} className="border border-[var(--border)] rounded-lg p-3">
                 <p className="text-xs text-[var(--text-dim)] mb-2">{t.fileName}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-[10px] text-[var(--text-dim)] mb-1">Column in "{base.fileName}"</p>
-                    <select
-                      value={links[i].baseKey}
-                      onChange={(e) => updateLink(i, { baseKey: e.target.value })}
-                      className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                    >
-                      <option value="" disabled>Pick column...</option>
-                      {base.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-[var(--text-dim)] mb-1">Matching column in "{t.fileName}"</p>
-                    <select
-                      value={links[i].otherKey}
-                      onChange={(e) => updateLink(i, { otherKey: e.target.value })}
-                      className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                    >
-                      <option value="" disabled>Pick column...</option>
-                      {t.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                </div>
+                <KeyPairsEditor
+                  baseColumns={base.columns}
+                  otherColumns={t.columns}
+                  baseLabel={`Column in "${base.fileName}"`}
+                  otherLabel={`Matching column in "${t.fileName}"`}
+                  pairs={links[i]}
+                  onChange={(pairs) => setLinks((prev) => prev.map((l, idx) => (idx === i ? pairs : l)))}
+                />
               </div>
             ))}
           </div>

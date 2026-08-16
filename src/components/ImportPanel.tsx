@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { X, Upload, Loader2, Link2, Plus, Trash2, ChevronDown } from "lucide-react";
 import type { DataRow } from "../types";
-import { parseFile, parseFiles, appendTables, mergeManyTables, type ParsedFile, type LookupJoin } from "../lib/importFiles";
+import { parseFile, parseFiles, appendTables, mergeManyTables, aggregateForJoin, type ParsedFile, type LookupJoin } from "../lib/importFiles";
 import { fetchSheetAsRows, extractSheetId } from "../lib/sheets";
 import { listSheetTabs, type SheetTab } from "../lib/googleDrive";
+import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
 
 interface Props {
   onApply: (rows: DataRow[], columns: string[]) => void;
@@ -17,8 +18,7 @@ interface TabLink {
   id: string;
   tabTitle: string;
   table: ParsedFile | null;
-  baseKey: string;
-  otherKey: string;
+  keyPairs: KeyPair[];
   busy: boolean;
   error: string | null;
 }
@@ -26,8 +26,11 @@ interface TabLink {
 interface FileLink {
   id: string;
   table: ParsedFile | null;
-  baseKey: string;
-  otherKey: string;
+  keyPairs: KeyPair[];
+}
+
+function newKeyPairs(): KeyPair[] {
+  return [{ baseKey: "", otherKey: "" }];
 }
 
 export function ImportPanel({ onApply, onClose }: Props) {
@@ -132,28 +135,22 @@ export function ImportPanel({ onApply, onClose }: Props) {
     const unused = (tabs ?? []).find((t) => t.title !== baseTabTitle && !tabLinks.some((l) => l.tabTitle === t.title));
     if (!unused) return;
     const id = crypto.randomUUID();
-    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, baseKey: "", otherKey: "", busy: true, error: null }]);
+    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, keyPairs: newKeyPairs(), busy: true, error: null }]);
     fetchTabLinkData(id, unused.title);
   }
 
   async function fetchTabLinkData(id: string, tabTitle: string) {
     try {
       const { rows, columns } = await fetchSheetAsRows(sheetUrl.trim(), tabTitle);
-      setTabLinks((prev) =>
-        prev.map((l) => (l.id === id ? { ...l, table: { fileName: tabTitle, rows, columns }, otherKey: columns[0] ?? "", busy: false } : l))
-      );
+      setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: { fileName: tabTitle, rows, columns }, busy: false } : l)));
     } catch (e) {
       setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, error: e instanceof Error ? e.message : "Couldn't load this tab", busy: false } : l)));
     }
   }
 
   async function changeTabLinkTitle(id: string, newTitle: string) {
-    setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, tabTitle: newTitle, table: null, baseKey: "", otherKey: "", busy: true, error: null } : l)));
+    setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, tabTitle: newTitle, table: null, keyPairs: newKeyPairs(), busy: true, error: null } : l)));
     await fetchTabLinkData(id, newTitle);
-  }
-
-  function updateTabLink(id: string, patch: Partial<TabLink>) {
-    setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
 
   // ---- merge / files sub-mode ----
@@ -172,21 +169,17 @@ export function ImportPanel({ onApply, onClose }: Props) {
   }
 
   function addFileLink() {
-    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, baseKey: "", otherKey: "" }]);
+    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, keyPairs: newKeyPairs() }]);
   }
 
   async function handleFileLinkFile(id: string, fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     try {
       const parsed = await parseFile(fileList[0]);
-      setFileLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: parsed, otherKey: parsed.columns[0] ?? "" } : l)));
+      setFileLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: parsed } : l)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't read that file");
     }
-  }
-
-  function updateFileLink(id: string, patch: Partial<FileLink>) {
-    setFileLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
 
   function apply() {
@@ -196,23 +189,38 @@ export function ImportPanel({ onApply, onClose }: Props) {
       const { rows, columns } = appendTables(tables);
       onApply(rows, columns);
     } else if (mode === "merge" && mergeSource === "tabs" && base) {
-      const joins: LookupJoin[] = tabLinks
-        .filter((l): l is TabLink & { table: ParsedFile } => !!l.table && !!l.baseKey && !!l.otherKey)
-        .map((l) => ({ table: l.table, baseKey: l.baseKey, otherKey: l.otherKey }));
-      const { rows, columns } = mergeManyTables(base, joins);
+      const ready = tabLinks.filter((l): l is TabLink & { table: ParsedFile } => !!l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey));
+      // Every side gets collapsed to one row per its own matching key(s)
+      // first — a no-op when a side already has unique keys, and exactly
+      // what prevents a value from getting copied onto more rows than it
+      // should when a side naturally has several rows per key (e.g.
+      // several transactions on the same day for the same item).
+      const baseKeyColumns = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
+      const aggregatedBase = aggregateForJoin(base, baseKeyColumns);
+      const joins: LookupJoin[] = ready.map((l) => ({
+        table: aggregateForJoin(l.table, l.keyPairs.map((p) => p.otherKey)),
+        baseKeys: l.keyPairs.map((p) => p.baseKey),
+        otherKeys: l.keyPairs.map((p) => p.otherKey),
+      }));
+      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
       onApply(rows, columns);
     } else if (mode === "merge" && mergeSource === "files" && fileBase) {
-      const joins: LookupJoin[] = fileLinks
-        .filter((l): l is FileLink & { table: ParsedFile } => !!l.table && !!l.baseKey && !!l.otherKey)
-        .map((l) => ({ table: l.table, baseKey: l.baseKey, otherKey: l.otherKey }));
-      const { rows, columns } = mergeManyTables(fileBase, joins);
+      const ready = fileLinks.filter((l): l is FileLink & { table: ParsedFile } => !!l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey));
+      const baseKeyColumns = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
+      const aggregatedBase = aggregateForJoin(fileBase, baseKeyColumns);
+      const joins: LookupJoin[] = ready.map((l) => ({
+        table: aggregateForJoin(l.table, l.keyPairs.map((p) => p.otherKey)),
+        baseKeys: l.keyPairs.map((p) => p.baseKey),
+        otherKeys: l.keyPairs.map((p) => p.otherKey),
+      }));
+      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
       onApply(rows, columns);
     }
     onClose();
   }
 
-  const tabsReadyCount = tabLinks.filter((l) => l.table && l.baseKey && l.otherKey).length;
-  const filesReadyCount = fileLinks.filter((l) => l.table && l.baseKey && l.otherKey).length;
+  const tabsReadyCount = tabLinks.filter((l) => l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey)).length;
+  const filesReadyCount = fileLinks.filter((l) => l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey)).length;
   const canApply =
     (mode === "replace" && tables.length > 0) ||
     (mode === "append" && tables.length > 0) ||
@@ -317,11 +325,17 @@ export function ImportPanel({ onApply, onClose }: Props) {
               ))}
             </div>
 
+            <p className="text-[11px] text-[var(--text-dim)]">
+              Rows sharing the same matching value(s) get totaled together automatically before linking (e.g. several transactions on the
+              same day for the same item become one summed row) — so matching by more than one column together (e.g. Product AND Day) still
+              gives you correct totals even when either sheet has several rows per key.
+            </p>
+
             {mergeSource === "tabs" ? (
               <div className="space-y-3">
                 <p className="text-xs text-[var(--text-dim)]">
                   Paste one Google Sheet link, pick which tab is your main table, then pick any other tabs in that same
-                  sheet to link onto it (e.g. a "Products" tab matched by an ID column).
+                  sheet to link onto it.
                 </p>
 
                 <div className="flex gap-2">
@@ -392,29 +406,14 @@ export function ImportPanel({ onApply, onClose }: Props) {
                             {link.busy && <p className="text-xs text-[var(--text-dim)] flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Loading tab...</p>}
                             {link.error && <p className="text-xs text-[var(--bad)]">{link.error}</p>}
                             {link.table && (
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <p className="text-[10px] text-[var(--text-dim)] mb-1">Base column</p>
-                                  <select
-                                    value={link.baseKey}
-                                    onChange={(e) => updateTabLink(link.id, { baseKey: e.target.value })}
-                                    className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                                  >
-                                    <option value="" disabled>Pick column...</option>
-                                    {base.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                                  </select>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] text-[var(--text-dim)] mb-1">Matches this tab's column</p>
-                                  <select
-                                    value={link.otherKey}
-                                    onChange={(e) => updateTabLink(link.id, { otherKey: e.target.value })}
-                                    className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                                  >
-                                    {link.table.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                                  </select>
-                                </div>
-                              </div>
+                              <KeyPairsEditor
+                                baseColumns={base.columns}
+                                otherColumns={link.table.columns}
+                                baseLabel="Base column"
+                                otherLabel="Matches this tab's column"
+                                pairs={link.keyPairs}
+                                onChange={(pairs) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, keyPairs: pairs } : l)))}
+                              />
                             )}
                           </div>
                         ))}
@@ -434,7 +433,7 @@ export function ImportPanel({ onApply, onClose }: Props) {
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-[var(--text-dim)]">
-                  Upload one base file, then upload any number of other files to link onto it by a matching column.
+                  Upload one base file, then upload any number of other files to link onto it by matching column(s).
                 </p>
                 <div>
                   <p className="text-[10px] text-[var(--text-dim)] mb-1">Main table (base file)</p>
@@ -475,33 +474,18 @@ export function ImportPanel({ onApply, onClose }: Props) {
                           <>
                             <div className="flex items-center justify-between bg-[var(--panel-raised)] rounded-md px-2.5 py-1.5 text-xs">
                               <span>{link.table.fileName} — {link.table.rows.length} rows · {link.table.columns.length} cols</span>
-                              <button onClick={() => updateFileLink(link.id, { table: null, baseKey: "", otherKey: "" })} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
+                              <button onClick={() => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, table: null, keyPairs: newKeyPairs() } : l)))} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
                                 <Trash2 size={13} />
                               </button>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <p className="text-[10px] text-[var(--text-dim)] mb-1">Base column</p>
-                                <select
-                                  value={link.baseKey}
-                                  onChange={(e) => updateFileLink(link.id, { baseKey: e.target.value })}
-                                  className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                                >
-                                  <option value="" disabled>Pick column...</option>
-                                  {fileBase.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <p className="text-[10px] text-[var(--text-dim)] mb-1">Matches this file's column</p>
-                                <select
-                                  value={link.otherKey}
-                                  onChange={(e) => updateFileLink(link.id, { otherKey: e.target.value })}
-                                  className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm"
-                                >
-                                  {link.table.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                              </div>
-                            </div>
+                            <KeyPairsEditor
+                              baseColumns={fileBase.columns}
+                              otherColumns={link.table.columns}
+                              baseLabel="Base column"
+                              otherLabel="Matches this file's column"
+                              pairs={link.keyPairs}
+                              onChange={(pairs) => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, keyPairs: pairs } : l)))}
+                            />
                           </>
                         )}
                       </div>

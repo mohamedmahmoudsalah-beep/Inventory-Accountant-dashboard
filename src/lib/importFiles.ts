@@ -80,21 +80,81 @@ export function appendTables(tables: ParsedFile[]): { columns: string[]; rows: D
   return { columns, rows };
 }
 
+function compositeKey(row: DataRow, keys: string[]): string {
+  return keys.map((k) => String(row[k] ?? "").trim().toLowerCase()).join("␟");
+}
+
+/**
+ * Collapses `table` down to one row per unique combination of `keyColumns`
+ * — every numeric column gets summed across the rows that share a key,
+ * every other (text) column just keeps whatever value the first row in
+ * that group had. Meant to run on a table *before* it's used as a merge
+ * base/lookup whenever that table can have more than one row per key (e.g.
+ * several transactions on the same day for the same item) — a merge
+ * always attaches exactly one matching row's values onto every row on the
+ * other side, so linking un-aggregated many-rows-per-key data directly is
+ * what causes a value to get copied onto more rows than it should,
+ * silently multiplying any SUM computed afterwards. Aggregating both sides
+ * down to one row per key first (this function) is what a proper "group by
+ * key, then join" does, and avoids that entirely — no manual Pivot/Export
+ * round-trip needed.
+ */
+export function aggregateForJoin(table: ParsedFile, keyColumns: string[]): ParsedFile {
+  const groups = new Map<string, DataRow[]>();
+  table.rows.forEach((r) => {
+    const key = compositeKey(r, keyColumns);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(r);
+    else groups.set(key, [r]);
+  });
+
+  const isNumericCell = (v: unknown) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v)));
+
+  const rows: DataRow[] = [];
+  groups.forEach((groupRows) => {
+    const row: DataRow = {};
+    table.columns.forEach((c) => {
+      if (keyColumns.includes(c)) {
+        row[c] = groupRows[0][c];
+        return;
+      }
+      const allNumeric = groupRows.every((r) => r[c] === undefined || r[c] === "" || isNumericCell(r[c]));
+      row[c] = allNumeric
+        ? groupRows.reduce((sum, r) => sum + (Number(r[c]) || 0), 0)
+        : groupRows[0][c]; // descriptive/text column — first value seen wins, matching what a real GROUP BY would do for a non-aggregated column
+    });
+    rows.push(row);
+  });
+
+  return { fileName: table.fileName, columns: table.columns, rows };
+}
+
 /**
  * Merge (left join): for every row in `base`, looks up a matching row in
- * `other` by comparing baseKey/otherKey values, and copies over `other`'s
- * remaining columns (prefixed if they'd collide with an existing column).
+ * `other` by comparing baseKeys/otherKeys values (in order — the Nth base
+ * key is matched against the Nth other key), and copies over `other`'s
+ * remaining columns (renamed if they'd collide with an existing column).
+ *
+ * Pass more than one key when a single column doesn't uniquely identify a
+ * "row" on either side — e.g. matching by Product AND Month together,
+ * because Product alone would match every month's row. Matching on too few
+ * keys is the #1 cause of a merge silently multiplying totals: if `other`
+ * has several rows sharing the same (incomplete) key, only the last one
+ * found wins the lookup, and if `base` has many rows sharing that key, the
+ * single matched value gets copied onto every one of them — inflating any
+ * SUM computed over it afterwards. Matching on the full combination that's
+ * actually unique on the `other` side avoids this.
  */
 export function mergeTables(
   base: ParsedFile,
   other: ParsedFile,
-  baseKey: string,
-  otherKey: string
+  baseKeys: string[],
+  otherKeys: string[]
 ): { columns: string[]; rows: DataRow[] } {
   const otherByKey = new Map<string, DataRow>();
-  other.rows.forEach((r) => otherByKey.set(String(r[otherKey]), r));
+  other.rows.forEach((r) => otherByKey.set(compositeKey(r, otherKeys), r));
 
-  const otherExtraCols = other.columns.filter((c) => c !== otherKey);
+  const otherExtraCols = other.columns.filter((c) => !otherKeys.includes(c));
   const renamed = otherExtraCols.map((c) =>
     base.columns.includes(c) ? `${c}_2` : c
   );
@@ -102,7 +162,7 @@ export function mergeTables(
   const columns = [...base.columns, ...renamed];
 
   const rows: DataRow[] = base.rows.map((baseRow) => {
-    const match = otherByKey.get(String(baseRow[baseKey]));
+    const match = otherByKey.get(compositeKey(baseRow, baseKeys));
     const row: DataRow = { ...baseRow };
     otherExtraCols.forEach((c, i) => {
       row[renamed[i]] = match ? match[c] ?? "" : "";
@@ -115,8 +175,8 @@ export function mergeTables(
 
 export interface LookupJoin {
   table: ParsedFile;
-  baseKey: string; // column in `base` (or an earlier lookup's added columns — see note below)
-  otherKey: string; // column in `table`
+  baseKeys: string[]; // column(s) in `base` — matched in order against otherKeys
+  otherKeys: string[]; // matching column(s) in `table`, same length as baseKeys
 }
 
 /**
@@ -137,17 +197,17 @@ export function mergeManyTables(base: ParsedFile, lookups: LookupJoin[]): { colu
   let columns = [...base.columns];
   const rows: DataRow[] = base.rows.map((r) => ({ ...r }));
 
-  lookups.forEach(({ table, baseKey, otherKey }) => {
+  lookups.forEach(({ table, baseKeys, otherKeys }) => {
     const byKey = new Map<string, DataRow>();
-    table.rows.forEach((r) => byKey.set(String(r[otherKey]), r));
+    table.rows.forEach((r) => byKey.set(compositeKey(r, otherKeys), r));
 
-    const extraCols = table.columns.filter((c) => c !== otherKey);
+    const extraCols = table.columns.filter((c) => !otherKeys.includes(c));
     const suffix = `_${table.fileName.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "") || "linked"}`;
     const renamed = extraCols.map((c) => (columns.includes(c) ? `${c}${suffix}` : c));
     columns = [...columns, ...renamed];
 
     rows.forEach((row) => {
-      const match = byKey.get(String(row[baseKey]));
+      const match = byKey.get(compositeKey(row, baseKeys));
       extraCols.forEach((c, i) => {
         row[renamed[i]] = match ? match[c] ?? "" : "";
       });
