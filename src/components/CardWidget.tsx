@@ -6,6 +6,7 @@ import { computeMeasureValue } from "../lib/measures";
 import { formatNumber } from "../lib/numeric";
 import { applyWidgetFilter } from "../lib/widgetFilter";
 import { WidgetFilterControl } from "./WidgetFilterControl";
+import { ValueSourceSelect } from "./ValueSourceSelect";
 
 interface Props {
   config: CardConfig;
@@ -101,31 +102,13 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
 
       {canEdit && showEditor && (
         <div className="mb-2 space-y-2">
-          <select
-            value={config.value.kind === "column" ? `column:${config.value.column}:${config.value.agg}` : `measure:${config.value.measureId}`}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
-              else {
-                const [, col, agg] = val.split(":");
-                onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
-              }
-            }}
-            className="w-full bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-xs text-[var(--text)]"
-          >
-            <optgroup label="Columns">
-              {columns.flatMap((col) =>
-                (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
-                  <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
-                ))
-              )}
-            </optgroup>
-            {measures.length > 0 && (
-              <optgroup label="Measures">
-                {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>★ {m.name}</option>)}
-              </optgroup>
-            )}
-          </select>
+          <ValueSourceSelect
+            columns={columns}
+            measures={measures}
+            value={config.value}
+            onChange={(value) => onChange({ ...config, value })}
+            className="text-xs"
+          />
 
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <select

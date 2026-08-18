@@ -8,6 +8,8 @@ import { formatNumber } from "../lib/numeric";
 import { applyWidgetFilter } from "../lib/widgetFilter";
 import { WidgetFilterControl } from "./WidgetFilterControl";
 import { ExplainButton } from "./ExplainButton";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
+import { ValueSourceSelect } from "./ValueSourceSelect";
 
 interface Props {
   config: MatrixConfig;
@@ -126,42 +128,21 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
 
       {canEdit && showEditor && (
         <div className="mb-3 p-3 rounded-lg bg-[var(--panel-raised)] border border-[var(--border)] flex flex-wrap gap-2 text-xs">
-          <select value={config.rowCol} onChange={(e) => onChange({ ...config, rowCol: e.target.value })}
-            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-            <option value="" disabled>rows…</option>
-            {columns.map((c) => <option key={c} value={c}>rows: {c}</option>)}
-          </select>
-          <select value={config.colCol} onChange={(e) => onChange({ ...config, colCol: e.target.value })}
-            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-            <option value="" disabled>cols…</option>
-            {columns.map((c) => <option key={c} value={c}>cols: {c}</option>)}
-          </select>
-          <select
-            value={config.value.kind === "column" ? `column:${config.value.column}:${config.value.agg}` : `measure:${config.value.measureId}`}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val.startsWith("measure:")) onChange({ ...config, value: { kind: "measure", measureId: val.slice(8) } });
-              else {
-                const [, col, agg] = val.split(":");
-                onChange({ ...config, value: { kind: "column", column: col, agg: agg as "sum" | "avg" | "count" | "distinct" | "max" | "min" } });
-              }
-            }}
+          <GroupedColumnSelect
+            columns={columns}
+            value={config.rowCol}
+            onChange={(v) => onChange({ ...config, rowCol: v })}
+            placeholder="rows…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="column::sum" disabled>value…</option>
-            <optgroup label="Columns">
-              {columns.flatMap((col) =>
-                (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
-                  <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
-                ))
-              )}
-            </optgroup>
-            {measures.length > 0 && (
-              <optgroup label="Measures">
-                {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>★ {m.name}</option>)}
-              </optgroup>
-            )}
-          </select>
+          />
+          <GroupedColumnSelect
+            columns={columns}
+            value={config.colCol}
+            onChange={(v) => onChange({ ...config, colCol: v })}
+            placeholder="cols…"
+            className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+          />
+          <ValueSourceSelect columns={columns} measures={measures} value={config.value} onChange={(value) => onChange({ ...config, value })} />
           <select
             value={config.numberFormat ?? "auto"}
             onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}

@@ -8,6 +8,8 @@ import { formatNumber } from "../lib/numeric";
 import { applyWidgetFilter } from "../lib/widgetFilter";
 import { WidgetFilterControl } from "./WidgetFilterControl";
 import { ExplainButton } from "./ExplainButton";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
+import { ValueSourceSelect } from "./ValueSourceSelect";
 
 interface Props {
   config: PivotConfig;
@@ -207,10 +209,12 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
             <div className="space-y-1.5">
               {config.groupCols.map((c, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <select value={c} onChange={(e) => updateGroupCol(i, e.target.value)}
-                    className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                    {columns.map((col) => <option key={col} value={col}>{col}</option>)}
-                  </select>
+                  <GroupedColumnSelect
+                    columns={columns}
+                    value={c}
+                    onChange={(v) => updateGroupCol(i, v)}
+                    className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                  />
                   <button onClick={() => removeGroupCol(i)} className="text-[var(--text-dim)] hover:text-[var(--bad)]"><X size={13} /></button>
                 </div>
               ))}
@@ -225,34 +229,18 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
             <div className="space-y-1.5">
               {config.values.map((v, i) => (
                 <div key={v.id} className="flex items-center gap-1.5 flex-wrap">
-                  <select
-                    value={v.source.kind === "measure" ? `measure:${v.source.measureId}` : `column:${v.source.column}:${v.source.agg}`}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val.startsWith("measure:")) {
-                        const measureId = val.slice("measure:".length);
-                        const m = measures.find((mm) => mm.id === measureId);
-                        updateValue(i, { ...v, label: m?.name ?? v.label, source: { kind: "measure", measureId } });
-                      } else {
-                        const [, col, agg] = val.split(":");
-                        updateValue(i, { ...v, label: `${agg} ${col}`, source: { kind: "column", column: col, agg: agg as PivotValueMetric["source"] extends { agg: infer A } ? A : never } });
-                      }
+                  <ValueSourceSelect
+                    columns={columns}
+                    measures={measures}
+                    value={v.source}
+                    onChange={(source) => {
+                      const label =
+                        source.kind === "measure"
+                          ? measures.find((mm) => mm.id === source.measureId)?.name ?? v.label
+                          : `${source.agg} ${source.column}`;
+                      updateValue(i, { ...v, label, source });
                     }}
-                    className="flex-1 min-w-[160px] bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-                  >
-                    <optgroup label="Columns">
-                      {columns.flatMap((col) =>
-                        (["sum", "avg", "count", "distinct", "max", "min"] as const).map((agg) => (
-                          <option key={`${col}:${agg}`} value={`column:${col}:${agg}`}>{agg} {col}</option>
-                        ))
-                      )}
-                    </optgroup>
-                    {measures.length > 0 && (
-                      <optgroup label="Measures">
-                        {measures.map((m) => <option key={m.id} value={`measure:${m.id}`}>\u2605 {m.name}</option>)}
-                      </optgroup>
-                    )}
-                  </select>
+                  />
                   <input
                     value={v.label}
                     onChange={(e) => updateValue(i, { ...v, label: e.target.value })}

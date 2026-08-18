@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import type { DataRow, WidgetFilter } from "../types";
 import { detectColumnType } from "../lib/columnTypes";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
 
 interface Props {
   columns: string[];
@@ -36,10 +37,13 @@ export function WidgetFilterControl({ columns, rows, filter, onChange, className
 
   return (
     <>
-      <select value={filter?.column ?? ""} onChange={(e) => pickColumn(e.target.value)} className={cls}>
-        <option value="">No widget filter</option>
-        {columns.map((c) => <option key={c} value={c}>filter: {c}</option>)}
-      </select>
+      <GroupedColumnSelect
+        columns={columns}
+        value={filter?.column ?? ""}
+        onChange={pickColumn}
+        noneOption={{ value: "", label: "No widget filter" }}
+        className={cls}
+      />
 
       {filter && isNumberColumn && (
         <>

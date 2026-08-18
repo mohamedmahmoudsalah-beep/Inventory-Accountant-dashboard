@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, X, CalendarRange } from "lucide-react";
 import type { DataRow, FilterConfig } from "../types";
 import { ExplainButton } from "./ExplainButton";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
 
 interface Props {
   columns: string[];
@@ -59,16 +60,13 @@ export function FilterBar({ columns, rows, filters, onChange, readOnly = false, 
           key={`${f.column}-${i}`}
           className="flex items-center gap-1 bg-[var(--panel-raised)] border border-[var(--border)] rounded-lg pl-2 pr-1 py-1"
         >
-          <select
+          <GroupedColumnSelect
+            columns={columns}
             value={f.column}
             disabled={readOnly}
-            onChange={(e) => updateFilter(i, { column: e.target.value, value: "All" })}
+            onChange={(v) => updateFilter(i, { column: v, value: "All" })}
             className="bg-transparent text-xs text-[var(--text-dim)] outline-none disabled:opacity-70"
-          >
-            {columns.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          />
 
           {f.mode === "range" ? (
             <>

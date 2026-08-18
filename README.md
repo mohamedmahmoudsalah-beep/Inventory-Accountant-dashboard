@@ -477,6 +477,12 @@ Click **Import file** on any task page. Three modes:
 
   "List tabs" needs Google Drive connected (see "Connecting data" below) — it calls the Sheets API to read the spreadsheet's tab names, same as picking a tab when connecting a page's main data source.
 
+## Field pickers are grouped, and Value pickers are two-step
+
+Every dropdown that lists columns (filters, Pivot's group-by/values, Matrix's rows/columns/value, Chart's X/Y axis, Measures) is grouped automatically whenever column names contain a "/" — e.g. Odoo-style exports like `Stock move/Product/Name` and `Stock move/Reference` land together under a "Stock move" group instead of sitting as two unrelated entries in one long list, the same idea as Excel's PivotTable field list grouping fields by their source table. Columns with no "/" (plain names like `Date` or a column added by Merge/Link) stay as flat top-level options. No configuration needed — the grouping comes straight from the column names themselves.
+
+Anywhere a value needed both a column *and* an aggregation (Pivot/Matrix/Card's "Values") used to be one dropdown combining every column with every function ("sum X", "avg X", "count X", ... — 6× the column count). That's now two separate pickers: field first, then function — shorter lists, and consistent everywhere a Value picker appears.
+
 ## Charts available
 
 Bar, Line, Area, Pie, Scatter, and Radar — pick the type, X column, and Y column per chart. Every chart and the data table have their own **Export to Excel** button.

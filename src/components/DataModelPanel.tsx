@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Plus, Trash2, Sparkles } from "lucide-react";
 import type { CalculatedColumn, Measure, PivotAgg } from "../types";
 import { FormulaInput } from "./FormulaInput";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
 import { MEASURE_FORMULA_FUNCTIONS } from "../lib/measures";
 
 interface Props {
@@ -231,16 +232,20 @@ export function DataModelPanel({
                         className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
                         {AGGS.map((a) => <option key={a} value={a}>{a}</option>)}
                       </select>
-                      <select value={m.column} onChange={(e) => updateMeasure(i, { column: e.target.value })}
-                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                      <GroupedColumnSelect
+                        columns={columns}
+                        value={m.column}
+                        onChange={(v) => updateMeasure(i, { column: v })}
+                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                      />
                       <span className="text-[var(--text-dim)]">where</span>
-                      <select value={m.conditionColumn ?? ""} onChange={(e) => updateMeasure(i, { conditionColumn: e.target.value || undefined })}
-                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]">
-                        <option value="">(none)</option>
-                        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                      <GroupedColumnSelect
+                        columns={columns}
+                        value={m.conditionColumn ?? ""}
+                        onChange={(v) => updateMeasure(i, { conditionColumn: v || undefined })}
+                        noneOption={{ value: "", label: "(none)" }}
+                        className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
+                      />
                       <span className="text-[var(--text-dim)]">=</span>
                       <input value={m.conditionValue ?? ""} onChange={(e) => updateMeasure(i, { conditionValue: e.target.value })}
                         placeholder="value" disabled={!m.conditionColumn}

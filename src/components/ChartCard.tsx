@@ -9,6 +9,7 @@ import type { ChartConfig, DataRow } from "../types";
 import { exportRowsToExcel } from "../lib/exportExcel";
 import { parseNumeric, formatNumber } from "../lib/numeric";
 import { ExplainButton } from "./ExplainButton";
+import { GroupedColumnSelect } from "./GroupedColumnSelect";
 
 const COLORS = ["#c81e94", "#57c99a", "#e94fb0", "#7aa2e8", "#f2b807", "#8a5fd6"];
 
@@ -144,22 +145,20 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
             <option value="radar">Radar</option>
             <option value="treemap">Treemap</option>
           </select>
-          <select
+          <GroupedColumnSelect
+            columns={columns}
             value={config.xKey}
-            onChange={(e) => onChange({ ...config, xKey: e.target.value })}
+            onChange={(v) => onChange({ ...config, xKey: v })}
+            placeholder="X axis…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="" disabled>X axis…</option>
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
+          />
+          <GroupedColumnSelect
+            columns={columns}
             value={config.yKey}
-            onChange={(e) => onChange({ ...config, yKey: e.target.value })}
+            onChange={(v) => onChange({ ...config, yKey: v })}
+            placeholder="Y axis…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
-          >
-            <option value="" disabled>Y axis…</option>
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          />
           {config.type !== "treemap" && config.type !== "pie" && (
             <label className="flex items-center gap-1 text-[var(--text-dim)] cursor-pointer">
               <input
