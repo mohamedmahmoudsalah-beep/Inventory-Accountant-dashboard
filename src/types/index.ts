@@ -190,7 +190,15 @@ export interface TaskPage {
 export interface ImportRecipe {
   sheetUrl: string;
   baseTab: string;
-  links: { tabTitle: string; keyPairs: { baseKey: string; otherKey: string }[] }[];
+  /** Which of the base tab's own columns to keep, and how each combines
+   *  when the chosen key repeats — column name -> aggregation. */
+  basePicks?: Record<string, string>;
+  links: {
+    tabTitle: string;
+    keyPairs: { baseKey: string; otherKey: string }[];
+    /** Same idea as basePicks, for this linked tab's own columns. */
+    picks?: Record<string, string>;
+  }[];
 }
 
 export interface Department {

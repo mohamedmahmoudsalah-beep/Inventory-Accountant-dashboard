@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { X, Upload, Loader2, Link2, Plus, Trash2, ChevronDown } from "lucide-react";
 import type { DataRow, ImportRecipe } from "../types";
-import { parseFile, parseFiles, appendTables, mergeManyTables, aggregateForJoin, type ParsedFile, type LookupJoin } from "../lib/importFiles";
+import {
+  parseFile, parseFiles, appendTables, mergeManyTables, aggregateForJoin, defaultPicksForKeys,
+  type ParsedFile, type LookupJoin, type JoinAgg,
+} from "../lib/importFiles";
 import { fetchSheetAsRows, extractSheetId } from "../lib/sheets";
 import { listSheetTabs, type SheetTab } from "../lib/googleDrive";
 import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
+import { ColumnPicksEditor } from "./ColumnPicksEditor";
 
 interface Props {
   onApply: (rows: DataRow[], columns: string[], columnGroups?: Record<string, string>, importRecipe?: ImportRecipe) => void;
@@ -24,6 +28,7 @@ interface TabLink {
   tabTitle: string;
   table: ParsedFile | null;
   keyPairs: KeyPair[];
+  picks: Record<string, JoinAgg>;
   busy: boolean;
   error: string | null;
 }
@@ -32,6 +37,7 @@ interface FileLink {
   id: string;
   table: ParsedFile | null;
   keyPairs: KeyPair[];
+  picks: Record<string, JoinAgg>;
 }
 
 function newKeyPairs(): KeyPair[] {
@@ -54,11 +60,21 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
   const [tabs, setTabs] = useState<SheetTab[] | null>(null);
   const [baseTabTitle, setBaseTabTitle] = useState<string | null>(null);
   const [base, setBase] = useState<ParsedFile | null>(null);
+  const [basePicks, setBasePicks] = useState<Record<string, JoinAgg>>({});
   const [tabLinks, setTabLinks] = useState<TabLink[]>([]);
 
   // merge — "files" sub-mode: uploaded files instead of a shared spreadsheet
   const [fileBase, setFileBase] = useState<ParsedFile | null>(null);
+  const [fileBasePicks, setFileBasePicks] = useState<Record<string, JoinAgg>>({});
   const [fileLinks, setFileLinks] = useState<FileLink[]>([]);
+
+  // Every base key column across every configured link — used both to
+  // aggregate the base table before merging (see apply()) and as the
+  // "don't offer these as pickable value columns" exclusion list for
+  // ColumnPicksEditor, since a key column is already always carried
+  // through.
+  const baseKeyColumns = [...new Set(tabLinks.flatMap((l) => l.keyPairs.map((p) => p.baseKey).filter(Boolean)))];
+  const fileBaseKeyColumns = [...new Set(fileLinks.flatMap((l) => l.keyPairs.map((p) => p.baseKey).filter(Boolean)))];
 
   // Replays the last merge automatically on open — see initialRecipe doc.
   useEffect(() => {
@@ -75,18 +91,22 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
 
         setBaseTabTitle(initialRecipe.baseTab);
         const baseData = await fetchSheetAsRows(initialRecipe.sheetUrl, initialRecipe.baseTab);
-        setBase({ fileName: initialRecipe.baseTab, rows: baseData.rows, columns: baseData.columns });
+        const baseTable: ParsedFile = { fileName: initialRecipe.baseTab, rows: baseData.rows, columns: baseData.columns };
+        setBase(baseTable);
+        setBasePicks((initialRecipe.basePicks as Record<string, JoinAgg> | undefined) ?? defaultPicksForKeys(baseTable, []));
 
         const restoredLinks = await Promise.all(
           initialRecipe.links.map(async (link) => {
             const id2 = crypto.randomUUID();
             try {
               const data = await fetchSheetAsRows(initialRecipe.sheetUrl, link.tabTitle);
+              const table: ParsedFile = { fileName: link.tabTitle, rows: data.rows, columns: data.columns };
               return {
                 id: id2,
                 tabTitle: link.tabTitle,
-                table: { fileName: link.tabTitle, rows: data.rows, columns: data.columns },
+                table,
                 keyPairs: link.keyPairs,
+                picks: (link.picks as Record<string, JoinAgg> | undefined) ?? defaultPicksForKeys(table, []),
                 busy: false,
                 error: null,
               } satisfies TabLink;
@@ -96,6 +116,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                 tabTitle: link.tabTitle,
                 table: null,
                 keyPairs: link.keyPairs,
+                picks: {},
                 busy: false,
                 error: e instanceof Error ? e.message : "Couldn't reload this tab",
               } satisfies TabLink;
@@ -121,8 +142,10 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     setTabs(null);
     setBaseTabTitle(null);
     setBase(null);
+    setBasePicks({});
     setTabLinks([]);
     setFileBase(null);
+    setFileBasePicks({});
     setFileLinks([]);
   }
 
@@ -182,7 +205,9 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     setError(null);
     try {
       const { rows, columns } = await fetchSheetAsRows(sheetUrl.trim(), title);
-      setBase({ fileName: title, rows, columns });
+      const table: ParsedFile = { fileName: title, rows, columns };
+      setBase(table);
+      setBasePicks(defaultPicksForKeys(table, []));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Couldn't read the "${title}" tab`);
     } finally {
@@ -194,21 +219,22 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     const unused = (tabs ?? []).find((t) => t.title !== baseTabTitle && !tabLinks.some((l) => l.tabTitle === t.title));
     if (!unused) return;
     const id = crypto.randomUUID();
-    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, keyPairs: newKeyPairs(), busy: true, error: null }]);
+    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, keyPairs: newKeyPairs(), picks: {}, busy: true, error: null }]);
     fetchTabLinkData(id, unused.title);
   }
 
   async function fetchTabLinkData(id: string, tabTitle: string) {
     try {
       const { rows, columns } = await fetchSheetAsRows(sheetUrl.trim(), tabTitle);
-      setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: { fileName: tabTitle, rows, columns }, busy: false } : l)));
+      const table: ParsedFile = { fileName: tabTitle, rows, columns };
+      setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table, picks: defaultPicksForKeys(table, []), busy: false } : l)));
     } catch (e) {
       setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, error: e instanceof Error ? e.message : "Couldn't load this tab", busy: false } : l)));
     }
   }
 
   async function changeTabLinkTitle(id: string, newTitle: string) {
-    setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, tabTitle: newTitle, table: null, keyPairs: newKeyPairs(), busy: true, error: null } : l)));
+    setTabLinks((prev) => prev.map((l) => (l.id === id ? { ...l, tabTitle: newTitle, table: null, keyPairs: newKeyPairs(), picks: {}, busy: true, error: null } : l)));
     await fetchTabLinkData(id, newTitle);
   }
 
@@ -219,7 +245,9 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     setBusy(true);
     setError(null);
     try {
-      setFileBase(await parseFile(fileList[0]));
+      const table = await parseFile(fileList[0]);
+      setFileBase(table);
+      setFileBasePicks(defaultPicksForKeys(table, []));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't read that file");
     } finally {
@@ -228,14 +256,14 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
   }
 
   function addFileLink() {
-    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, keyPairs: newKeyPairs() }]);
+    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, keyPairs: newKeyPairs(), picks: {} }]);
   }
 
   async function handleFileLinkFile(id: string, fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     try {
       const parsed = await parseFile(fileList[0]);
-      setFileLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: parsed } : l)));
+      setFileLinks((prev) => prev.map((l) => (l.id === id ? { ...l, table: parsed, picks: defaultPicksForKeys(parsed, []) } : l)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't read that file");
     }
@@ -253,30 +281,44 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
       // first — a no-op when a side already has unique keys, and exactly
       // what prevents a value from getting copied onto more rows than it
       // should when a side naturally has several rows per key (e.g.
-      // several transactions on the same day for the same item).
-      const baseKeyColumns = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
-      const aggregatedBase = aggregateForJoin(base, baseKeyColumns);
-      const joins: LookupJoin[] = ready.map((l) => ({
-        table: aggregateForJoin(l.table, l.keyPairs.map((p) => p.otherKey)),
-        baseKeys: l.keyPairs.map((p) => p.baseKey),
-        otherKeys: l.keyPairs.map((p) => p.otherKey),
-      }));
+      // several transactions on the same day for the same item). Only the
+      // columns explicitly checked in each side's picker are kept —
+      // everything else (e.g. a raw export's mostly-empty columns nobody
+      // asked for) is dropped, keeping the merged result small and exact.
+      const mergeBaseKeys = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
+      const basePickCols = Object.keys(basePicks).filter((c) => !mergeBaseKeys.includes(c));
+      const aggregatedBase = aggregateForJoin(base, mergeBaseKeys, { keepColumns: basePickCols, aggOverrides: basePicks });
+      const joins: LookupJoin[] = ready.map((l) => {
+        const otherKeys = l.keyPairs.map((p) => p.otherKey);
+        const pickCols = Object.keys(l.picks).filter((c) => !otherKeys.includes(c));
+        return {
+          table: aggregateForJoin(l.table, otherKeys, { keepColumns: pickCols, aggOverrides: l.picks }),
+          baseKeys: l.keyPairs.map((p) => p.baseKey),
+          otherKeys,
+        };
+      });
       const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
       const recipe: ImportRecipe = {
         sheetUrl: sheetUrl.trim(),
         baseTab: baseTabTitle ?? "",
-        links: ready.map((l) => ({ tabTitle: l.tabTitle, keyPairs: l.keyPairs })),
+        basePicks,
+        links: ready.map((l) => ({ tabTitle: l.tabTitle, keyPairs: l.keyPairs, picks: l.picks })),
       };
       onApply(rows, columns, columnGroups, recipe);
     } else if (mode === "merge" && mergeSource === "files" && fileBase) {
       const ready = fileLinks.filter((l): l is FileLink & { table: ParsedFile } => !!l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey));
-      const baseKeyColumns = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
-      const aggregatedBase = aggregateForJoin(fileBase, baseKeyColumns);
-      const joins: LookupJoin[] = ready.map((l) => ({
-        table: aggregateForJoin(l.table, l.keyPairs.map((p) => p.otherKey)),
-        baseKeys: l.keyPairs.map((p) => p.baseKey),
-        otherKeys: l.keyPairs.map((p) => p.otherKey),
-      }));
+      const mergeBaseKeys = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
+      const basePickCols = Object.keys(fileBasePicks).filter((c) => !mergeBaseKeys.includes(c));
+      const aggregatedBase = aggregateForJoin(fileBase, mergeBaseKeys, { keepColumns: basePickCols, aggOverrides: fileBasePicks });
+      const joins: LookupJoin[] = ready.map((l) => {
+        const otherKeys = l.keyPairs.map((p) => p.otherKey);
+        const pickCols = Object.keys(l.picks).filter((c) => !otherKeys.includes(c));
+        return {
+          table: aggregateForJoin(l.table, otherKeys, { keepColumns: pickCols, aggOverrides: l.picks }),
+          baseKeys: l.keyPairs.map((p) => p.baseKey),
+          otherKeys,
+        };
+      });
       const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
       onApply(rows, columns, columnGroups);
     }
@@ -451,6 +493,15 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                     </div>
 
                     {base && (
+                      <ColumnPicksEditor
+                        table={base}
+                        keyColumns={baseKeyColumns}
+                        picks={basePicks}
+                        onChange={setBasePicks}
+                      />
+                    )}
+
+                    {base && (
                       <div className="space-y-3">
                         <p className="text-xs text-[var(--text-dim)]">Linked tabs</p>
                         {tabLinks.map((link) => (
@@ -475,14 +526,22 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                             {link.busy && <p className="text-xs text-[var(--text-dim)] flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Loading tab...</p>}
                             {link.error && <p className="text-xs text-[var(--bad)]">{link.error}</p>}
                             {link.table && (
-                              <KeyPairsEditor
-                                baseColumns={base.columns}
-                                otherColumns={link.table.columns}
-                                baseLabel="Base column"
-                                otherLabel="Matches this tab's column"
-                                pairs={link.keyPairs}
-                                onChange={(pairs) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, keyPairs: pairs } : l)))}
-                              />
+                              <>
+                                <KeyPairsEditor
+                                  baseColumns={base.columns}
+                                  otherColumns={link.table.columns}
+                                  baseLabel="Base column"
+                                  otherLabel="Matches this tab's column"
+                                  pairs={link.keyPairs}
+                                  onChange={(pairs) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, keyPairs: pairs } : l)))}
+                                />
+                                <ColumnPicksEditor
+                                  table={link.table}
+                                  keyColumns={link.keyPairs.map((p) => p.otherKey).filter(Boolean)}
+                                  picks={link.picks}
+                                  onChange={(picks) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, picks } : l)))}
+                                />
+                              </>
                             )}
                           </div>
                         ))}
@@ -523,6 +582,15 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                 </div>
 
                 {fileBase && (
+                  <ColumnPicksEditor
+                    table={fileBase}
+                    keyColumns={fileBaseKeyColumns}
+                    picks={fileBasePicks}
+                    onChange={setFileBasePicks}
+                  />
+                )}
+
+                {fileBase && (
                   <div className="space-y-3">
                     <p className="text-xs text-[var(--text-dim)]">Linked files</p>
                     {fileLinks.map((link) => (
@@ -543,7 +611,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                           <>
                             <div className="flex items-center justify-between bg-[var(--panel-raised)] rounded-md px-2.5 py-1.5 text-xs">
                               <span>{link.table.fileName} — {link.table.rows.length} rows · {link.table.columns.length} cols</span>
-                              <button onClick={() => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, table: null, keyPairs: newKeyPairs() } : l)))} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
+                              <button onClick={() => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, table: null, keyPairs: newKeyPairs(), picks: {} } : l)))} className="text-[var(--text-dim)] hover:text-[var(--bad)]">
                                 <Trash2 size={13} />
                               </button>
                             </div>
@@ -554,6 +622,12 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                               otherLabel="Matches this file's column"
                               pairs={link.keyPairs}
                               onChange={(pairs) => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, keyPairs: pairs } : l)))}
+                            />
+                            <ColumnPicksEditor
+                              table={link.table}
+                              keyColumns={link.keyPairs.map((p) => p.otherKey).filter(Boolean)}
+                              picks={link.picks}
+                              onChange={(picks) => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, picks } : l)))}
                             />
                           </>
                         )}

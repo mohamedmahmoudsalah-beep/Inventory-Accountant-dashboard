@@ -121,7 +121,71 @@ function compositeKey(row: DataRow, keys: string[]): string {
  * key, then join" does, and avoids that entirely — no manual Pivot/Export
  * round-trip needed.
  */
-export function aggregateForJoin(table: ParsedFile, keyColumns: string[]): ParsedFile {
+const isNumericCell = (v: unknown) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v)));
+
+/** Best-guess default for how a column should combine when its key repeats
+ *  — "sum" if essentially every sampled value looks numeric, "first"
+ *  (keep whichever value the first row in the group had) otherwise. Used
+ *  to pre-fill the aggregation picker in the Merge UI; always overridable
+ *  per column from there. */
+export function guessAggForColumn(table: ParsedFile, column: string): "sum" | "first" {
+  const sample = table.rows.slice(0, 30).map((r) => r[column]).filter((v) => v !== undefined && v !== "");
+  if (sample.length === 0) return "first";
+  const numeric = sample.filter(isNumericCell).length;
+  return numeric / sample.length >= 0.8 ? "sum" : "first";
+}
+
+/** Sensible starting point for ColumnPicksEditor: only the columns that
+ *  look numeric get pre-checked (with Sum) — text/ID-like columns start
+ *  unchecked, since dragging in every column a raw sheet happens to have
+ *  is exactly the bloat/noise this picker exists to avoid. Fully
+ *  overridable from the UI either way. */
+export function defaultPicksForKeys(table: ParsedFile, keyColumns: string[]): Record<string, JoinAgg> {
+  const picks: Record<string, JoinAgg> = {};
+  table.columns
+    .filter((c) => !keyColumns.includes(c))
+    .forEach((c) => {
+      if (guessAggForColumn(table, c) === "sum") picks[c] = "sum";
+    });
+  return picks;
+}
+
+export type JoinAgg = "sum" | "avg" | "count" | "max" | "min" | "distinct" | "first";
+
+/**
+ * Collapses `table` down to one row per unique combination of `keyColumns`.
+ *
+ * `keepColumns`, when given, is the exact set of non-key columns to carry
+ * into the result — anything else is dropped entirely rather than merely
+ * left un-aggregated, so a table with a lot of columns nobody asked for
+ * (e.g. a raw Odoo export) doesn't balloon the merged result or add noise
+ * to it. Omit it to keep every column (the original default behavior).
+ *
+ * `aggOverrides[column]` picks exactly how that column combines when rows
+ * share a key — "sum"/"avg"/"count"/"max"/"min"/"distinct" the usual way,
+ * or "first" to just keep whichever value the first row in the group had
+ * (the right choice for an ID/name/category column that isn't meant to be
+ * combined at all). Falls back to guessAggForColumn's heuristic for any
+ * kept column without an explicit override.
+ *
+ * Meant to run on a table *before* it's used as a merge base/lookup
+ * whenever that table can have more than one row per key (e.g. several
+ * transactions on the same day for the same product) — a merge always
+ * attaches exactly one matching row's values onto every row on the other
+ * side, so linking un-aggregated many-rows-per-key data directly is what
+ * causes a value to get copied onto more rows than it should, silently
+ * multiplying any SUM computed afterwards. Aggregating both sides down to
+ * one row per key first (this function) is what a proper "group by key,
+ * then join" does, and avoids that entirely.
+ */
+export function aggregateForJoin(
+  table: ParsedFile,
+  keyColumns: string[],
+  options?: { keepColumns?: string[]; aggOverrides?: Record<string, JoinAgg> }
+): ParsedFile {
+  const valueColumns = (options?.keepColumns ?? table.columns.filter((c) => !keyColumns.includes(c)));
+  const resultColumns = [...keyColumns, ...valueColumns.filter((c) => !keyColumns.includes(c))];
+
   const groups = new Map<string, DataRow[]>();
   table.rows.forEach((r) => {
     const key = compositeKey(r, keyColumns);
@@ -130,25 +194,30 @@ export function aggregateForJoin(table: ParsedFile, keyColumns: string[]): Parse
     else groups.set(key, [r]);
   });
 
-  const isNumericCell = (v: unknown) => typeof v === "number" || (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v)));
-
   const rows: DataRow[] = [];
   groups.forEach((groupRows) => {
     const row: DataRow = {};
-    table.columns.forEach((c) => {
+    resultColumns.forEach((c) => {
       if (keyColumns.includes(c)) {
         row[c] = groupRows[0][c];
         return;
       }
-      const allNumeric = groupRows.every((r) => r[c] === undefined || r[c] === "" || isNumericCell(r[c]));
-      row[c] = allNumeric
-        ? groupRows.reduce((sum, r) => sum + (Number(r[c]) || 0), 0)
-        : groupRows[0][c]; // descriptive/text column — first value seen wins, matching what a real GROUP BY would do for a non-aggregated column
+      const agg = options?.aggOverrides?.[c] ?? guessAggForColumn(table, c);
+      const nums = () => groupRows.map((r) => (isNumericCell(r[c]) ? Number(r[c]) : 0));
+      switch (agg) {
+        case "sum": row[c] = nums().reduce((a, b) => a + b, 0); break;
+        case "avg": row[c] = nums().reduce((a, b) => a + b, 0) / groupRows.length; break;
+        case "count": row[c] = groupRows.filter((r) => r[c] !== undefined && r[c] !== "").length; break;
+        case "max": row[c] = Math.max(...nums()); break;
+        case "min": row[c] = Math.min(...nums()); break;
+        case "distinct": row[c] = new Set(groupRows.map((r) => String(r[c] ?? ""))).size; break;
+        case "first": default: row[c] = groupRows[0][c]; break;
+      }
     });
     rows.push(row);
   });
 
-  return { fileName: table.fileName, columns: table.columns, rows };
+  return { fileName: table.fileName, columns: resultColumns, rows };
 }
 
 /**
