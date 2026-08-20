@@ -13,6 +13,7 @@ interface Props {
   /** Department/team name, used only to give the AI explain button a bit
    *  more context — purely cosmetic if omitted. */
   deptName?: string;
+  columnGroups?: Record<string, string>;
 }
 
 function explainFilterPrompt(f: FilterConfig): string {
@@ -22,7 +23,7 @@ function explainFilterPrompt(f: FilterConfig): string {
   return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي الفلتر ده بيعمله بالظبط: هو بيفلتر عمود "${f.column}" على القيمة "${f.value}"${f.value === "All" ? " (يعني من غير أي فلترة فعلية على العمود ده دلوقتي)" : ""}. وضّح تأثيره على البيانات الظاهرة في الصفحة دلوقتي، وإيه الفايدة منه، في 3 إلى 4 جمل بسيطة وقصيرة.`;
 }
 
-export function FilterBar({ columns, rows, filters, onChange, readOnly = false, deptName = "" }: Props) {
+export function FilterBar({ columns, rows, filters, onChange, readOnly = false, deptName = "", columnGroups }: Props) {
   const [showAddMenu, setShowAddMenu] = useState(false);
 
   function addFilter() {
@@ -64,6 +65,7 @@ export function FilterBar({ columns, rows, filters, onChange, readOnly = false, 
             columns={columns}
             value={f.column}
             disabled={readOnly}
+            groups={columnGroups}
             onChange={(v) => updateFilter(i, { column: v, value: "All" })}
             className="bg-transparent text-xs text-[var(--text-dim)] outline-none disabled:opacity-70"
           />

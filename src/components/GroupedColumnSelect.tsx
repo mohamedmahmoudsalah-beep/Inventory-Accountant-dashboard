@@ -16,21 +16,41 @@ interface Props {
   /** An optional selectable (not disabled) leading option, e.g. "No widget
    *  filter" — distinct from `placeholder`, which renders disabled. */
   noneOption?: { value: string; label: string };
+  /** Column name -> source sheet/table label (see TaskPage.columnGroups) —
+   *  when this page's data came from Import → Merge (join), this is the
+   *  real, explicit grouping to use: every column tagged with which sheet
+   *  it actually came from (e.g. "Sales", "Scrap"), the same idea as
+   *  Excel's PivotTable field list grouping fields by their source table.
+   *  Falls back to splitting on "/" in the column name (Odoo-style
+   *  exports) only when this is absent, e.g. a page that was never
+   *  merged. */
+  groups?: Record<string, string>;
 }
 
-/** Groups options the same way it groups anything: everything before the
- *  first "/" in a column name becomes a group header, the rest becomes the
- *  option's label within it — so "Stock move/Product/Name" and "Stock
- *  move/Reference" land together under a "Stock move" group instead of
- *  sitting as two unrelated entries in one long alphabetical list. Columns
- *  with no "/" (e.g. a plain "Date" or "Category" from a merged lookup
- *  sheet) stay as flat top-level options — this is exactly the shape
- *  Odoo-style exports and this app's own Merge/Link feature already
- *  produce, so no extra tagging or configuration is needed to get grouping
- *  "for free". Mirrors Excel's PivotTable field list, where fields are
- *  grouped by the table they came from. */
-export function GroupedColumnSelect({ columns, value, onChange, extraGroup, className, placeholder, disabled, noneOption }: Props) {
+/** Groups options by their real source sheet when `groups` is provided
+ *  (see TaskPage.columnGroups) — falling back to treating everything
+ *  before the first "/" in a column name as a group header (Odoo-style
+ *  "Stock move/Product/Name" exports) only when no explicit grouping
+ *  exists for this page. Mirrors Excel's PivotTable field list, where
+ *  fields are grouped by the table they came from. */
+export function GroupedColumnSelect({ columns, value, onChange, extraGroup, className, placeholder, disabled, noneOption, groups: sourceGroups }: Props) {
   const { ungrouped, groups } = useMemo(() => {
+    if (sourceGroups && Object.keys(sourceGroups).length > 0) {
+      const groupMap = new Map<string, string[]>();
+      const flat: string[] = [];
+      columns.forEach((col) => {
+        const label = sourceGroups[col];
+        if (!label) {
+          flat.push(col);
+        } else {
+          const arr = groupMap.get(label);
+          if (arr) arr.push(col);
+          else groupMap.set(label, [col]);
+        }
+      });
+      return { ungrouped: flat, groups: [...groupMap.entries()].map(([label, cols]) => [label, cols, false] as const) };
+    }
+
     const groupMap = new Map<string, string[]>();
     const flat: string[] = [];
     columns.forEach((col) => {
@@ -44,8 +64,8 @@ export function GroupedColumnSelect({ columns, value, onChange, extraGroup, clas
         else groupMap.set(label, [col]);
       }
     });
-    return { ungrouped: flat, groups: [...groupMap.entries()] };
-  }, [columns]);
+    return { ungrouped: flat, groups: [...groupMap.entries()].map(([label, cols]) => [label, cols, true] as const) };
+  }, [columns, sourceGroups]);
 
   return (
     <select
@@ -57,9 +77,9 @@ export function GroupedColumnSelect({ columns, value, onChange, extraGroup, clas
       {placeholder && <option value="" disabled>{placeholder}</option>}
       {noneOption && <option value={noneOption.value}>{noneOption.label}</option>}
       {ungrouped.map((c) => <option key={c} value={c}>{c}</option>)}
-      {groups.map(([label, cols]) => (
+      {groups.map(([label, cols, stripPrefix]) => (
         <optgroup key={label} label={label}>
-          {cols.map((c) => <option key={c} value={c}>{c.slice(label.length + 1)}</option>)}
+          {cols.map((c) => <option key={c} value={c}>{stripPrefix ? c.slice(label.length + 1) : c}</option>)}
         </optgroup>
       ))}
       {extraGroup && extraGroup.options.length > 0 && (

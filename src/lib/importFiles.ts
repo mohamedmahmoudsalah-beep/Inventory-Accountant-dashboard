@@ -80,8 +80,30 @@ export function appendTables(tables: ParsedFile[]): { columns: string[]; rows: D
   return { columns, rows };
 }
 
+function normalizeKeyValue(v: unknown): string {
+  if (typeof v === "number") return String(v);
+  const str = String(v ?? "").trim();
+  if (str === "") return "";
+
+  // Date-shaped values get normalized to a plain YYYY-MM-DD before
+  // comparing — this is the #1 reason a composite key that matches
+  // perfectly on an ID alone still finds zero matches once a date column
+  // joins it: two Google Sheet tabs can hold the exact same calendar day
+  // formatted completely differently depending on that tab's own cell
+  // formatting (e.g. "6/1/2026" vs "2026-06-01" vs "01/06/2026"), so a
+  // plain string comparison never matches even though the underlying date
+  // is identical. Parsed by hand (not `new Date(...)`) to avoid timezone
+  // shifts silently moving a date to the day before/after.
+  let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(str);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(str);
+  if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+
+  return str.toLowerCase();
+}
+
 function compositeKey(row: DataRow, keys: string[]): string {
-  return keys.map((k) => String(row[k] ?? "").trim().toLowerCase()).join("␟");
+  return keys.map((k) => normalizeKeyValue(row[k])).join("␟");
 }
 
 /**
@@ -192,10 +214,21 @@ export interface LookupJoin {
  * the base sheet), join B onto the base first, apply it, then re-open
  * Import → Merge with the *result* as the new base and C as the lookup —
  * two passes covers that case without needing more UI complexity here.
+ *
+ * Also returns `columnGroups`: which original sheet each column came from
+ * (base.fileName for base columns, each lookup's fileName for the columns
+ * it contributed) — meant to be stored on the page so every column picker
+ * in the app can group fields by their source sheet, the same idea as
+ * Excel's PivotTable field list grouping fields by table.
  */
-export function mergeManyTables(base: ParsedFile, lookups: LookupJoin[]): { columns: string[]; rows: DataRow[] } {
+export function mergeManyTables(
+  base: ParsedFile,
+  lookups: LookupJoin[]
+): { columns: string[]; rows: DataRow[]; columnGroups: Record<string, string> } {
   let columns = [...base.columns];
   const rows: DataRow[] = base.rows.map((r) => ({ ...r }));
+  const columnGroups: Record<string, string> = {};
+  base.columns.forEach((c) => (columnGroups[c] = base.fileName));
 
   lookups.forEach(({ table, baseKeys, otherKeys }) => {
     const byKey = new Map<string, DataRow>();
@@ -205,6 +238,7 @@ export function mergeManyTables(base: ParsedFile, lookups: LookupJoin[]): { colu
     const suffix = `_${table.fileName.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "") || "linked"}`;
     const renamed = extraCols.map((c) => (columns.includes(c) ? `${c}${suffix}` : c));
     columns = [...columns, ...renamed];
+    renamed.forEach((c) => (columnGroups[c] = table.fileName));
 
     rows.forEach((row) => {
       const match = byKey.get(compositeKey(row, baseKeys));
@@ -214,5 +248,5 @@ export function mergeManyTables(base: ParsedFile, lookups: LookupJoin[]): { colu
     });
   });
 
-  return { columns, rows };
+  return { columns, rows, columnGroups };
 }

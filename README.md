@@ -469,6 +469,8 @@ Click **Import file** on any task page. Three modes:
 
   **Matching by more than one column (composite keys):** every link can be matched on more than one column pair — click "Also match by another column" under any linked sheet. This matters whenever a single column repeats on either side — e.g. linking a Sales sheet (many rows per product per month) with a Scrap sheet (one row per product per month): matching by Product alone would let one Scrap row's value get copied onto every one of that product's Sales rows for every month.
 
+  **Dates match correctly even when the two sheets format them differently.** Two Google Sheet tabs can hold the exact same calendar day formatted completely differently depending on that tab's own cell formatting — `6/1/2026`, `2026-06-01`, `01/06/2026` — so a raw text comparison would find zero matches on a date column even though the underlying day is identical (this used to show up as every linked value coming back empty/0 the moment a date joined the key). Every key column that looks like a date gets normalized to a plain day before comparing, so this works regardless of either sheet's own date formatting.
+
   **Repeated rows on either side get totaled automatically — no manual pre-aggregation step needed.** Before the actual join runs, both the base table and every linked sheet get collapsed down to one row per their own matching key(s), with every numeric column summed across whatever rows shared that key (text columns keep whichever value the first matching row had). This is a no-op when a side already has one row per key, and exactly what keeps totals correct when either side naturally has several rows per key — e.g. several transactions on the same day for the same item. Match by enough columns together (e.g. Product **and** Day) that the combination is genuinely unique on each side, and the totaling handles the rest by itself.
 
   Either way, every linked sheet/file is matched directly against the **base table's own columns** (not against another linked sheet's columns) — covers "one main sheet + a few reference/lookup sheets" cleanly. If sheet C's key only exists in sheet B (a true chain, not a star), merge A+B first, apply it, then reopen Import → Merge using that result as the new base and C as the linked one.
@@ -479,7 +481,15 @@ Click **Import file** on any task page. Three modes:
 
 ## Field pickers are grouped, and Value pickers are two-step
 
-Every dropdown that lists columns (filters, Pivot's group-by/values, Matrix's rows/columns/value, Chart's X/Y axis, Measures) is grouped automatically whenever column names contain a "/" — e.g. Odoo-style exports like `Stock move/Product/Name` and `Stock move/Reference` land together under a "Stock move" group instead of sitting as two unrelated entries in one long list, the same idea as Excel's PivotTable field list grouping fields by their source table. Columns with no "/" (plain names like `Date` or a column added by Merge/Link) stay as flat top-level options. No configuration needed — the grouping comes straight from the column names themselves.
+**One-time setup:** run this once in Supabase's SQL Editor — adds the columns that remember which sheet each merged column came from, and the merge settings themselves for editing later (see below):
+```sql
+alter table pages add column if not exists column_groups jsonb;
+alter table pages add column if not exists import_recipe jsonb;
+```
+
+Reopening **Import → Merge → Tabs in one Google Sheet** on a page that was already merged this way replays the exact same settings automatically — the sheet link, which tab was the base, every linked tab, and every key column pair — so tweaking one thing (a different key column, one more linked tab) doesn't mean re-entering everything from scratch. Both new columns hold only small text (a link, tab names, column names) — never row data — so this doesn't add anything meaningful to Supabase egress.
+
+Every dropdown that lists columns (filters, Pivot's group-by/values, Matrix's rows/columns/value, Chart's X/Y axis, Measures) is grouped. When a page's data came from **Import → Merge (join)**, the grouping is real and explicit: every column is tagged with the actual sheet/tab it came from (e.g. "Sales", "Scrap"), stored in `column_groups`, and every picker groups by that — the same idea as Excel's PivotTable field list grouping fields by their source table. For a page that was never merged (a single connected sheet, or an Odoo-style export), there's no such tagging, so pickers fall back to splitting on "/" in the column name itself — e.g. `Stock move/Product/Name` and `Stock move/Reference` land together under a "Stock move" group. No configuration needed either way — the grouping comes straight from how the page's data was built.
 
 Anywhere a value needed both a column *and* an aggregation (Pivot/Matrix/Card's "Values") used to be one dropdown combining every column with every function ("sum X", "avg X", "count X", ... — 6× the column count). That's now two separate pickers: field first, then function — shorter lists, and consistent everywhere a Value picker appears.
 

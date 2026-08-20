@@ -25,6 +25,7 @@ interface Props {
   /** Department/team name, used only to give the AI explain button a bit
    *  more context — purely cosmetic if omitted. */
   deptName?: string;
+  columnGroups?: Record<string, string>;
 }
 
 const tooltipStyle = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8 };
@@ -36,7 +37,7 @@ function explainChartPrompt(config: ChartConfig): string {
   return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي شارت "${config.title}" ده (نوعه ${config.type}) بيعمله بالظبط: هو بيوريله محور "${config.xKey || "غير محدد"}" مقابل "${config.yKey || "غير محدد"}".${rankingNote} وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدة الشارت ده تحديدًا له في شغله، في 3 إلى 4 جمل بسيطة وقصيرة.`;
 }
 
-export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter, deptName = "" }: Props) {
+export function ChartCard({ config, rows, columns, canEdit, canExport = true, onChange, onRemove, onCrossFilter, deptName = "", columnGroups }: Props) {
   // Starts open for a brand-new chart (no columns picked yet) so the person
   // is dropped straight into picking them, instead of the chart silently
   // guessing the first two columns.
@@ -148,6 +149,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           <GroupedColumnSelect
             columns={columns}
             value={config.xKey}
+            groups={columnGroups}
             onChange={(v) => onChange({ ...config, xKey: v })}
             placeholder="X axis…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
@@ -155,6 +157,7 @@ export function ChartCard({ config, rows, columns, canEdit, canExport = true, on
           <GroupedColumnSelect
             columns={columns}
             value={config.yKey}
+            groups={columnGroups}
             onChange={(v) => onChange({ ...config, yKey: v })}
             placeholder="Y axis…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"

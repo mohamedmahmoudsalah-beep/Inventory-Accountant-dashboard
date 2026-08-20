@@ -16,6 +16,7 @@ interface Props {
   canEdit: boolean;
   onChange: (config: CardConfig) => void;
   onRemove: () => void;
+  columnGroups?: Record<string, string>;
 }
 
 function computeValue(subset: DataRow[], config: CardConfig, measures: Measure[]): number {
@@ -31,7 +32,7 @@ function monthKey(dateStr: unknown): string | null {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export function CardWidget({ config, rows, columns, measures, canEdit, onChange, onRemove }: Props) {
+export function CardWidget({ config, rows, columns, measures, canEdit, onChange, onRemove, columnGroups }: Props) {
   const [showEditor, setShowEditor] = useState(false);
 
   const filteredRows = applyWidgetFilter(rows, config.filter);
@@ -106,6 +107,7 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
             columns={columns}
             measures={measures}
             value={config.value}
+            columnGroups={columnGroups}
             onChange={(value) => onChange({ ...config, value })}
             className="text-xs"
           />
@@ -123,6 +125,7 @@ export function CardWidget({ config, rows, columns, measures, canEdit, onChange,
               columns={columns}
               rows={rows}
               filter={config.filter}
+              columnGroups={columnGroups}
               onChange={(filter) => onChange({ ...config, filter })}
             />
           </div>

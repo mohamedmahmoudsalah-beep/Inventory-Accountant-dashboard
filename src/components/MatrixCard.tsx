@@ -27,6 +27,7 @@ interface Props {
   /** Department/team name, used only to give the AI explain button a bit
    *  more context — purely cosmetic if omitted. */
   deptName?: string;
+  columnGroups?: Record<string, string>;
 }
 
 function cellValue(rows: DataRow[], config: MatrixConfig, measures: Measure[]): number {
@@ -48,7 +49,7 @@ function explainMatrixPrompt(config: MatrixConfig, measures: Measure[]): string 
   return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي جدول المصفوفة (Matrix) اسمه "${config.title}" ده بيعمله بالظبط: هو بيوري تقاطع "${config.rowCol}" في الصفوف مع "${config.colCol}" في الأعمدة، وكل خلية فيه قيمتها هي ${valueLabel}. وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدته تحديدًا في شغله، في 3 إلى 4 جمل بسيطة وقصيرة.`;
 }
 
-export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "" }: Props) {
+export function MatrixCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "", columnGroups }: Props) {
   // Starts open for a brand-new matrix (no columns picked yet), same as Chart.
   const [showEditor, setShowEditor] = useState(
     !config.rowCol || !config.colCol || (config.value.kind === "column" && !config.value.column)
@@ -131,6 +132,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
           <GroupedColumnSelect
             columns={columns}
             value={config.rowCol}
+            groups={columnGroups}
             onChange={(v) => onChange({ ...config, rowCol: v })}
             placeholder="rows…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
@@ -138,11 +140,12 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
           <GroupedColumnSelect
             columns={columns}
             value={config.colCol}
+            groups={columnGroups}
             onChange={(v) => onChange({ ...config, colCol: v })}
             placeholder="cols…"
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           />
-          <ValueSourceSelect columns={columns} measures={measures} value={config.value} onChange={(value) => onChange({ ...config, value })} />
+          <ValueSourceSelect columns={columns} measures={measures} value={config.value} columnGroups={columnGroups} onChange={(value) => onChange({ ...config, value })} />
           <select
             value={config.numberFormat ?? "auto"}
             onChange={(e) => onChange({ ...config, numberFormat: e.target.value as "auto" | "full" })}
@@ -155,6 +158,7 @@ export function MatrixCard({ config, rows, columns, measures, canEdit, canExport
             columns={columns}
             rows={rows}
             filter={config.filter}
+            columnGroups={columnGroups}
             onChange={(filter) => onChange({ ...config, filter })}
             className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
           />

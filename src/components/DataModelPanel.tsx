@@ -12,6 +12,7 @@ interface Props {
   onChangeMeasures: (measures: Measure[]) => void;
   onChangeCalculatedColumns: (cols: CalculatedColumn[]) => void;
   onClose: () => void;
+  columnGroups?: Record<string, string>;
 }
 
 const AGGS: PivotAgg[] = ["sum", "avg", "count", "distinct", "max", "min"];
@@ -102,7 +103,7 @@ const RECIPES: Recipe[] = [
 ];
 
 export function DataModelPanel({
-  columns, measures, calculatedColumns, onChangeMeasures, onChangeCalculatedColumns, onClose,
+  columns, measures, calculatedColumns, onChangeMeasures, onChangeCalculatedColumns, onClose, columnGroups,
 }: Props) {
   const [tab, setTab] = useState<"recipes" | "measures" | "columns">("recipes");
 
@@ -235,6 +236,7 @@ export function DataModelPanel({
                       <GroupedColumnSelect
                         columns={columns}
                         value={m.column}
+                        groups={columnGroups}
                         onChange={(v) => updateMeasure(i, { column: v })}
                         className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
                       />
@@ -242,6 +244,7 @@ export function DataModelPanel({
                       <GroupedColumnSelect
                         columns={columns}
                         value={m.conditionColumn ?? ""}
+                        groups={columnGroups}
                         onChange={(v) => updateMeasure(i, { conditionColumn: v || undefined })}
                         noneOption={{ value: "", label: "(none)" }}
                         className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"

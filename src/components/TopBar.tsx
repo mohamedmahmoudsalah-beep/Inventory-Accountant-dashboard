@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RefreshCw, Link2, Loader2, FolderOpen, FileUp, Combine, Sigma, CloudUpload, Check, FileDown } from "lucide-react";
-import type { DataRow, TaskPage } from "../types";
+import type { DataRow, ImportRecipe, TaskPage } from "../types";
 import { useAuth } from "../lib/auth";
 import { canManageDataSources, canConnectNewData, canExport } from "../lib/permissions";
 import { showToast } from "../lib/toast";
@@ -22,7 +22,7 @@ interface Props {
   refreshing: boolean;
   onRefresh: () => void;
   onConnectSheet: (url: string, tabTitle?: string, sourceType?: "csv-link" | "drive") => void;
-  onImportData: (rows: DataRow[], columns: string[]) => void;
+  onImportData: (rows: DataRow[], columns: string[], columnGroups?: Record<string, string>, importRecipe?: ImportRecipe) => void;
   onOpenDataModel: () => void;
   /** Set once a fetch/import has updated this page locally but hasn't been
    *  written to the shared database yet — shows the "Save to shared
@@ -260,8 +260,9 @@ export function TopBar({
 
       {showImport && canConnect && (
         <ImportPanel
-          onApply={(rows, columns) => onImportData(rows, columns)}
+          onApply={(rows, columns, columnGroups, importRecipe) => onImportData(rows, columns, columnGroups, importRecipe)}
           onClose={() => setShowImport(false)}
+          initialRecipe={page.importRecipe}
         />
       )}
 
@@ -280,7 +281,7 @@ export function TopBar({
       {combineChoice && (
         <CombineSheetsModal
           tables={combineChoice.tables}
-          onApply={(rows, columns) => onImportData(rows, columns)}
+          onApply={(rows, columns, columnGroups) => onImportData(rows, columns, columnGroups)}
           onClose={() => setCombineChoice(null)}
         />
       )}

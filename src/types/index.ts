@@ -163,6 +163,19 @@ export interface TaskPage {
   lastUpdated: string | null;
   rows: DataRow[]; // raw rows as fetched/imported (calculated columns are derived, not stored here)
   columns: string[]; // raw column names
+  /** Which sheet/tab a column came from, when this page's data was built
+   *  via Import → Merge (join): column name -> source table label (e.g.
+   *  "Sales", "Scrap"). Column pickers throughout the app group by this
+   *  when present — the same idea as Excel's PivotTable field list
+   *  grouping fields by their source table — falling back to splitting on
+   *  "/" in the column name itself (e.g. Odoo-style "Stock move/Product/
+   *  Name" exports) when a page was never merged and this is absent. */
+  columnGroups?: Record<string, string>;
+  /** The exact "tabs in one Google Sheet" merge configuration that
+   *  produced this page's current data — remembered so reopening Import →
+   *  Merge to tweak something doesn't mean re-entering the sheet link and
+   *  every relationship from scratch. */
+  importRecipe?: ImportRecipe;
   charts: ChartConfig[];
   pivots: PivotConfig[];
   matrices: MatrixConfig[];
@@ -172,6 +185,12 @@ export interface TaskPage {
   measures: Measure[];
   calculatedColumns: CalculatedColumn[];
   activeFilters: FilterConfig[];
+}
+
+export interface ImportRecipe {
+  sheetUrl: string;
+  baseTab: string;
+  links: { tabTitle: string; keyPairs: { baseKey: string; otherKey: string }[] }[];
 }
 
 export interface Department {

@@ -15,6 +15,7 @@ import { WidgetShell } from "./components/WidgetShell";
 import { DataTable } from "./components/DataTable";
 import { AIAssistant } from "./components/AIAssistant";
 import { NamePromptModal } from "./components/NamePromptModal";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DataSourcesView } from "./components/DataSourcesView";
 import { UserManagement } from "./components/UserManagement";
 import { ActivityLogView } from "./components/ActivityLogView";
@@ -36,7 +37,7 @@ import { getStoredTheme, applyTheme, type Theme } from "./lib/theme";
 import { showToast, dismissToast } from "./lib/toast";
 import { exportElementToPdf } from "./lib/pdfExport";
 import type {
-  CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig,
+  CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig, ImportRecipe,
   MatrixConfig, Measure, PivotConfig, TextConfig, TaskPage,
 } from "./types";
 
@@ -563,13 +564,15 @@ function DashboardApp() {
     }
   }
 
-  function handleImportData(rows: DataRow[], columns: string[]) {
+  function handleImportData(rows: DataRow[], columns: string[], columnGroups?: Record<string, string>, importRecipe?: ImportRecipe) {
     const stampedRows = stampRowIds(rows);
     const lastUpdated = new Date().toISOString();
     const updatedPage: TaskPage = {
       ...activePage,
       rows: stampedRows,
       columns,
+      columnGroups, // undefined for Replace/Append — only Merge (join) tags columns by source sheet
+      importRecipe, // undefined unless this came from the "tabs" merge flow — reopening Import replays it (see ImportPanel)
       sourceType: "manual",
       sheetUrl: "",
       sheetTabTitle: undefined,
@@ -898,12 +901,21 @@ function DashboardApp() {
   // later, giving a real "Undo" window instead of a one-shot confirm().
   const pendingDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const UNDO_WINDOW_MS = 6000;
+  const [confirmDelete, setConfirmDelete] = useState<
+    { kind: "page"; deptId: string; pageId: string; name: string } | { kind: "department"; deptId: string; name: string } | null
+  >(null);
 
   function deleteDepartment(deptId: string) {
     if (departments.length <= 1) {
       showToast("You need at least one team.", { type: "error" });
       return;
     }
+    const dept = departments.find((d) => d.id === deptId);
+    if (!dept) return;
+    setConfirmDelete({ kind: "department", deptId, name: dept.name });
+  }
+
+  function deleteDepartmentConfirmed(deptId: string) {
     const removedDept = departments.find((d) => d.id === deptId);
     if (!removedDept) return;
     const removedIndex = departments.indexOf(removedDept);
@@ -956,6 +968,17 @@ function DashboardApp() {
   }
 
   function deletePage(deptId: string, pageId: string) {
+    const dept = departments.find((d) => d.id === deptId);
+    if (!dept || dept.pages.length <= 1) {
+      showToast("A team needs at least one page.", { type: "error" });
+      return;
+    }
+    const page = dept.pages.find((p) => p.id === pageId);
+    if (!page) return;
+    setConfirmDelete({ kind: "page", deptId, pageId, name: page.name });
+  }
+
+  function deletePageConfirmed(deptId: string, pageId: string) {
     const dept = departments.find((d) => d.id === deptId);
     if (!dept || dept.pages.length <= 1) {
       showToast("A team needs at least one page.", { type: "error" });
@@ -1097,6 +1120,7 @@ function DashboardApp() {
               onChange={setFilters}
               readOnly={!canFilter}
               deptName={activeDept.name}
+              columnGroups={activePage.columnGroups}
             />
 
             <div id="dashboard-page-content" className="p-6 space-y-4">
@@ -1142,6 +1166,7 @@ function DashboardApp() {
                             onChange={updateChart} onRemove={() => removeChart(w.item.id)}
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
                             deptName={activeDept.name}
+              columnGroups={activePage.columnGroups}
                           />
                         </WidgetShell>
                       );
@@ -1156,6 +1181,7 @@ function DashboardApp() {
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
                             activeFilters={activePage.activeFilters}
                             deptName={activeDept.name}
+              columnGroups={activePage.columnGroups}
                           />
                         </WidgetShell>
                       );
@@ -1170,6 +1196,7 @@ function DashboardApp() {
                             onCrossFilter={canFilter ? handleCrossFilter : undefined}
                             activeFilters={activePage.activeFilters}
                             deptName={activeDept.name}
+              columnGroups={activePage.columnGroups}
                           />
                         </WidgetShell>
                       );
@@ -1181,6 +1208,7 @@ function DashboardApp() {
                             config={w.item} rows={filteredRows} columns={effective.columns} measures={activePage.measures}
                             canEdit={canEdit}
                             onChange={updateCard} onRemove={() => removeCard(w.item.id)}
+                            columnGroups={activePage.columnGroups}
                           />
                         </WidgetShell>
                       );
@@ -1247,6 +1275,7 @@ function DashboardApp() {
           onChangeMeasures={setMeasures}
           onChangeCalculatedColumns={setCalculatedColumns}
           onClose={() => setShowDataModel(false)}
+          columnGroups={activePage.columnGroups}
         />
       )}
 
@@ -1266,6 +1295,22 @@ function DashboardApp() {
         <NamePromptModal
           title="Rename page" placeholder="Page name" initialValue={currentPageForRename.name} submitLabel="Save"
           onClose={() => setRenamePageTarget(null)} onCreate={(name) => renamePageTo(renamePageTarget.deptId, renamePageTarget.pageId, name)}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={confirmDelete.kind === "page" ? "Delete this page?" : "Delete this team?"}
+          message={
+            confirmDelete.kind === "page"
+              ? `"${confirmDelete.name}" and everything on it will be deleted. This can't be undone once the short "Undo" toast expires.`
+              : `"${confirmDelete.name}" and every page inside it will be deleted. This can't be undone once the short "Undo" toast expires.`
+          }
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            if (confirmDelete.kind === "page") deletePageConfirmed(confirmDelete.deptId, confirmDelete.pageId);
+            else deleteDepartmentConfirmed(confirmDelete.deptId);
+            setConfirmDelete(null);
+          }}
         />
       )}
     </div>

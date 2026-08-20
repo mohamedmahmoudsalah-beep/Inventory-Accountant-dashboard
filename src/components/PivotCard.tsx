@@ -27,6 +27,7 @@ interface Props {
   /** Department/team name, used only to give the AI explain button a bit
    *  more context — purely cosmetic if omitted. */
   deptName?: string;
+  columnGroups?: Record<string, string>;
 }
 
 function metricValue(rows: DataRow[], metric: PivotValueMetric, measures: Measure[]): number {
@@ -47,7 +48,7 @@ function explainPivotPrompt(config: PivotConfig): string {
   return `جاوب باللغة العربية العامية البسيطة فقط، من غير مصطلحات تقنية. اشرح للمستخدم إيه اللي الجدول المحوري (Pivot) اسمه "${config.title}" ده بيعمله بالظبط: هو بيجمّع صفوف البيانات حسب "${groupCols}"، وبيحسبلها القيم دي: "${values}"، ومرتبها ${sortLabel}، وعارض ${rangeLabel}. وضّح ده كله ببساطة زي ما تشرحله لزميل مش تقني، وإيه فايدة الجدول ده تحديدًا له في شغله، في 4 إلى 5 جمل بسيطة وقصيرة.`;
 }
 
-export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "" }: Props) {
+export function PivotCard({ config, rows, columns, measures, canEdit, canExport = true, onChange, onRemove, onCrossFilter, activeFilters = [], deptName = "", columnGroups }: Props) {
   const [showEditor, setShowEditor] = useState(false);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -212,6 +213,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
                   <GroupedColumnSelect
                     columns={columns}
                     value={c}
+                    groups={columnGroups}
                     onChange={(v) => updateGroupCol(i, v)}
                     className="flex-1 bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
                   />
@@ -233,6 +235,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
                     columns={columns}
                     measures={measures}
                     value={v.source}
+                    columnGroups={columnGroups}
                     onChange={(source) => {
                       const label =
                         source.kind === "measure"
@@ -275,6 +278,7 @@ export function PivotCard({ config, rows, columns, measures, canEdit, canExport 
                 columns={columns}
                 rows={rows}
                 filter={config.filter}
+                columnGroups={columnGroups}
                 onChange={(filter) => onChange({ ...config, filter })}
                 className="bg-[var(--panel)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]"
               />

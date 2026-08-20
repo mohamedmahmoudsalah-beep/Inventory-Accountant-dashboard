@@ -16,6 +16,7 @@ interface Props {
   value: ValueSource;
   onChange: (value: ValueSource) => void;
   className?: string;
+  columnGroups?: Record<string, string>;
 }
 
 /** Replaces the old single dropdown that combined every column with every
@@ -25,7 +26,7 @@ interface Props {
  *  Excel/Power BI's field list, and every other Value picker in this app
  *  (PivotCard, MatrixCard, CardWidget) now shares this one component so
  *  they stay consistent. */
-export function ValueSourceSelect({ columns, measures, value, onChange, className }: Props) {
+export function ValueSourceSelect({ columns, measures, value, onChange, className, columnGroups }: Props) {
   const isMeasure = value.kind === "measure";
   const selectedColumn = value.kind === "column" ? value.column : "";
   const selectedAgg: PivotAgg = value.kind === "column" ? value.agg : "sum";
@@ -35,6 +36,7 @@ export function ValueSourceSelect({ columns, measures, value, onChange, classNam
       <GroupedColumnSelect
         columns={columns}
         value={isMeasure ? `measure:${value.measureId}` : selectedColumn}
+        groups={columnGroups}
         onChange={(v) => {
           if (v.startsWith("measure:")) onChange({ kind: "measure", measureId: v.slice("measure:".length) });
           else onChange({ kind: "column", column: v, agg: selectedAgg });

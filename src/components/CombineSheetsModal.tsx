@@ -7,7 +7,7 @@ import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
 
 interface Props {
   tables: ParsedFile[]; // already fetched — tables[0] is treated as the main sheet if "link" is chosen
-  onApply: (rows: DataRow[], columns: string[]) => void;
+  onApply: (rows: DataRow[], columns: string[], columnGroups?: Record<string, string>) => void;
   onClose: () => void;
 }
 
@@ -46,8 +46,8 @@ export function CombineSheetsModal({ tables, onApply, onClose }: Props) {
         baseKeys: links[i].map((p) => p.baseKey),
         otherKeys: links[i].map((p) => p.otherKey),
       }));
-      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
-      onApply(rows, columns);
+      const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
+      onApply(rows, columns, columnGroups);
     }
     onClose();
   }

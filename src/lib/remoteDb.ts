@@ -23,7 +23,7 @@ const ACTIVITY_LOG = "activity_log";
 // that impossible regardless of what old columns still exist on the table.
 const TEAMS_COLUMNS = "id, name, created_at";
 const PAGES_COLUMNS =
-  "id, team_id, name, source_type, sheet_url, sheet_tab_title, last_updated, columns, measures, calculated_columns, active_filters, widget_order, created_at";
+  "id, team_id, name, source_type, sheet_url, sheet_tab_title, last_updated, columns, column_groups, import_recipe, measures, calculated_columns, active_filters, widget_order, created_at";
 const WIDGETS_COLUMNS = "id, page_id, kind, config, created_at";
 
 /** Best-effort audit trail: "who did what, when" for the high-level actions
@@ -191,6 +191,8 @@ interface PageRow {
   sheet_tab_title: string | null;
   last_updated: string | null;
   columns: string[] | null;
+  column_groups: Record<string, string> | null;
+  import_recipe: TaskPage["importRecipe"] | null;
   measures: unknown[] | null;
   calculated_columns: unknown[] | null;
   active_filters: unknown[] | null;
@@ -211,6 +213,8 @@ function pageRowToTaskPage(row: PageRow, widgets: WidgetRow[], rows: DataRow[]):
     sheetTabTitle: row.sheet_tab_title ?? undefined,
     lastUpdated: row.last_updated,
     columns: row.columns ?? [],
+    columnGroups: row.column_groups ?? undefined,
+    importRecipe: row.import_recipe ?? undefined,
     rows,
     measures: (row.measures as TaskPage["measures"]) ?? [],
     calculatedColumns: (row.calculated_columns as TaskPage["calculatedColumns"]) ?? [],
@@ -487,6 +491,8 @@ export async function savePageRemote(
         sheet_tab_title: page.sheetTabTitle || null,
         last_updated: page.lastUpdated,
         columns: page.columns,
+        column_groups: page.columnGroups ?? null,
+        import_recipe: page.importRecipe ?? null,
         measures: page.measures,
         calculated_columns: page.calculatedColumns,
         active_filters: page.activeFilters,

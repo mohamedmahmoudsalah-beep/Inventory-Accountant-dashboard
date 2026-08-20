@@ -1,14 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X, Upload, Loader2, Link2, Plus, Trash2, ChevronDown } from "lucide-react";
-import type { DataRow } from "../types";
+import type { DataRow, ImportRecipe } from "../types";
 import { parseFile, parseFiles, appendTables, mergeManyTables, aggregateForJoin, type ParsedFile, type LookupJoin } from "../lib/importFiles";
 import { fetchSheetAsRows, extractSheetId } from "../lib/sheets";
 import { listSheetTabs, type SheetTab } from "../lib/googleDrive";
 import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
 
 interface Props {
-  onApply: (rows: DataRow[], columns: string[]) => void;
+  onApply: (rows: DataRow[], columns: string[], columnGroups?: Record<string, string>, importRecipe?: ImportRecipe) => void;
   onClose: () => void;
+  /** The merge configuration that produced this page's current data, if
+   *  any — reopening the panel replays it automatically (re-lists the
+   *  sheet's tabs, re-picks the same base/linked tabs and key columns) so
+   *  editing one thing about an existing merge doesn't mean starting over. */
+  initialRecipe?: ImportRecipe;
 }
 
 type Mode = "replace" | "append" | "merge";
@@ -33,10 +38,11 @@ function newKeyPairs(): KeyPair[] {
   return [{ baseKey: "", otherKey: "" }];
 }
 
-export function ImportPanel({ onApply, onClose }: Props) {
-  const [mode, setMode] = useState<Mode>("replace");
+export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
+  const [mode, setMode] = useState<Mode>(initialRecipe ? "merge" : "replace");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadedFromRecipe, setLoadedFromRecipe] = useState(false);
 
   // replace / append
   const [tables, setTables] = useState<ParsedFile[]>([]);
@@ -53,6 +59,59 @@ export function ImportPanel({ onApply, onClose }: Props) {
   // merge — "files" sub-mode: uploaded files instead of a shared spreadsheet
   const [fileBase, setFileBase] = useState<ParsedFile | null>(null);
   const [fileLinks, setFileLinks] = useState<FileLink[]>([]);
+
+  // Replays the last merge automatically on open — see initialRecipe doc.
+  useEffect(() => {
+    if (!initialRecipe) return;
+    (async () => {
+      setBusy(true);
+      setError(null);
+      try {
+        setSheetUrl(initialRecipe.sheetUrl);
+        const id = extractSheetId(initialRecipe.sheetUrl);
+        if (!id) throw new Error("Saved sheet link looks invalid.");
+        const list = await listSheetTabs(id);
+        setTabs(list);
+
+        setBaseTabTitle(initialRecipe.baseTab);
+        const baseData = await fetchSheetAsRows(initialRecipe.sheetUrl, initialRecipe.baseTab);
+        setBase({ fileName: initialRecipe.baseTab, rows: baseData.rows, columns: baseData.columns });
+
+        const restoredLinks = await Promise.all(
+          initialRecipe.links.map(async (link) => {
+            const id2 = crypto.randomUUID();
+            try {
+              const data = await fetchSheetAsRows(initialRecipe.sheetUrl, link.tabTitle);
+              return {
+                id: id2,
+                tabTitle: link.tabTitle,
+                table: { fileName: link.tabTitle, rows: data.rows, columns: data.columns },
+                keyPairs: link.keyPairs,
+                busy: false,
+                error: null,
+              } satisfies TabLink;
+            } catch (e) {
+              return {
+                id: id2,
+                tabTitle: link.tabTitle,
+                table: null,
+                keyPairs: link.keyPairs,
+                busy: false,
+                error: e instanceof Error ? e.message : "Couldn't reload this tab",
+              } satisfies TabLink;
+            }
+          })
+        );
+        setTabLinks(restoredLinks);
+        setLoadedFromRecipe(true);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't reload the previous import settings — start fresh below.");
+      } finally {
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function resetAll() {
     setError(null);
@@ -202,8 +261,13 @@ export function ImportPanel({ onApply, onClose }: Props) {
         baseKeys: l.keyPairs.map((p) => p.baseKey),
         otherKeys: l.keyPairs.map((p) => p.otherKey),
       }));
-      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
-      onApply(rows, columns);
+      const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
+      const recipe: ImportRecipe = {
+        sheetUrl: sheetUrl.trim(),
+        baseTab: baseTabTitle ?? "",
+        links: ready.map((l) => ({ tabTitle: l.tabTitle, keyPairs: l.keyPairs })),
+      };
+      onApply(rows, columns, columnGroups, recipe);
     } else if (mode === "merge" && mergeSource === "files" && fileBase) {
       const ready = fileLinks.filter((l): l is FileLink & { table: ParsedFile } => !!l.table && l.keyPairs.every((p) => p.baseKey && p.otherKey));
       const baseKeyColumns = [...new Set(ready.flatMap((l) => l.keyPairs.map((p) => p.baseKey)))];
@@ -213,8 +277,8 @@ export function ImportPanel({ onApply, onClose }: Props) {
         baseKeys: l.keyPairs.map((p) => p.baseKey),
         otherKeys: l.keyPairs.map((p) => p.otherKey),
       }));
-      const { rows, columns } = mergeManyTables(aggregatedBase, joins);
-      onApply(rows, columns);
+      const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
+      onApply(rows, columns, columnGroups);
     }
     onClose();
   }
@@ -333,6 +397,11 @@ export function ImportPanel({ onApply, onClose }: Props) {
 
             {mergeSource === "tabs" ? (
               <div className="space-y-3">
+                {loadedFromRecipe && (
+                  <p className="text-[11px] text-[var(--accent)] flex items-center gap-1">
+                    <Link2 size={11} /> Loaded your last saved import settings for this page — edit anything below and re-apply.
+                  </p>
+                )}
                 <p className="text-xs text-[var(--text-dim)]">
                   Paste one Google Sheet link, pick which tab is your main table, then pick any other tabs in that same
                   sheet to link onto it.

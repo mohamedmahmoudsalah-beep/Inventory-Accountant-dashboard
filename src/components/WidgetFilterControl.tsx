@@ -10,6 +10,7 @@ interface Props {
   onChange: (filter: WidgetFilter | undefined) => void;
   /** Tailwind classes for each select/input, so callers can match their own sizing. */
   className?: string;
+  columnGroups?: Record<string, string>;
 }
 
 /** "Filter this widget" control shared by Pivot/Matrix/Card. Text columns
@@ -17,7 +18,7 @@ interface Props {
  *  columns get real comparison operators — greater than, less than, or
  *  between two values — since an exact-match dropdown on a number column
  *  (e.g. every distinct price) is rarely what anyone actually wants. */
-export function WidgetFilterControl({ columns, rows, filter, onChange, className }: Props) {
+export function WidgetFilterControl({ columns, rows, filter, onChange, className, columnGroups }: Props) {
   const cls = className ?? "bg-[var(--panel-raised)] border border-[var(--border)] rounded-md px-2 py-1 text-[var(--text)]";
   const isNumberColumn = filter ? detectColumnType(rows, filter.column) === "number" : false;
 
@@ -42,6 +43,7 @@ export function WidgetFilterControl({ columns, rows, filter, onChange, className
         value={filter?.column ?? ""}
         onChange={pickColumn}
         noneOption={{ value: "", label: "No widget filter" }}
+        groups={columnGroups}
         className={cls}
       />
 
