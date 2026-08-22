@@ -85,18 +85,27 @@ function normalizeKeyValue(v: unknown): string {
   const str = String(v ?? "").trim();
   if (str === "") return "";
 
+  // Plain numeric IDs get normalized too — strips thousands separators
+  // ("16,023,965" vs "16023965") and reconciles number-vs-text storage
+  // (16023965 vs "16023965") so an ID column matches regardless of which
+  // sheet happened to store/format it which way.
+  const cleanedNum = str.replace(/,/g, "");
+  if (/^-?\d+(\.\d+)?$/.test(cleanedNum)) return String(Number(cleanedNum));
+
   // Date-shaped values get normalized to a plain YYYY-MM-DD before
   // comparing — this is the #1 reason a composite key that matches
   // perfectly on an ID alone still finds zero matches once a date column
   // joins it: two Google Sheet tabs can hold the exact same calendar day
   // formatted completely differently depending on that tab's own cell
-  // formatting (e.g. "6/1/2026" vs "2026-06-01" vs "01/06/2026"), so a
-  // plain string comparison never matches even though the underlying date
-  // is identical. Parsed by hand (not `new Date(...)`) to avoid timezone
-  // shifts silently moving a date to the day before/after.
+  // formatting (e.g. "6/1/2026" vs "2026-06-01" vs "01/06/2026"), or with
+  // a trailing time-of-day one sheet's formatting adds and the other
+  // doesn't ("6/1/2026 0:00:00"). Parsed by hand (not `new Date(...)`) to
+  // avoid timezone shifts silently moving a date to the day before/after,
+  // and matched from the start only (no trailing anchor) so a trailing
+  // time-of-day or stray whitespace doesn't stop it from matching.
   let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(str);
   if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(str);
+  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/.exec(str);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
 
   return str.toLowerCase();
@@ -268,6 +277,24 @@ export interface LookupJoin {
   table: ParsedFile;
   baseKeys: string[]; // column(s) in `base` — matched in order against otherKeys
   otherKeys: string[]; // matching column(s) in `table`, same length as baseKeys
+  /** Also add rows for entries in `table` whose key never matched any
+   *  base row — with every base-only column left blank and the base's key
+   *  columns filled from this lookup's own key values. Off by default
+   *  (the original left-join behavior: only base rows survive, any
+   *  lookup-only entry is silently dropped) — turn on when a lookup
+   *  sheet's own entries matter even without a matching base row, e.g.
+   *  wanting every Scrap entry to show up somewhere even for a date/item
+   *  no matching Sales row was ever recorded for. */
+  includeUnmatched?: boolean;
+}
+
+export interface MergeMatchStats {
+  tableFileName: string;
+  matchedBaseRows: number;
+  unmatchedBaseRows: number;
+  totalBaseRows: number;
+  unmatchedLookupRows: number;
+  totalLookupRows: number;
 }
 
 /**
@@ -293,13 +320,14 @@ export interface LookupJoin {
 export function mergeManyTables(
   base: ParsedFile,
   lookups: LookupJoin[]
-): { columns: string[]; rows: DataRow[]; columnGroups: Record<string, string> } {
+): { columns: string[]; rows: DataRow[]; columnGroups: Record<string, string>; matchStats: MergeMatchStats[] } {
   let columns = [...base.columns];
-  const rows: DataRow[] = base.rows.map((r) => ({ ...r }));
+  let rows: DataRow[] = base.rows.map((r) => ({ ...r }));
   const columnGroups: Record<string, string> = {};
   base.columns.forEach((c) => (columnGroups[c] = base.fileName));
+  const matchStats: MergeMatchStats[] = [];
 
-  lookups.forEach(({ table, baseKeys, otherKeys }) => {
+  lookups.forEach(({ table, baseKeys, otherKeys, includeUnmatched }) => {
     const byKey = new Map<string, DataRow>();
     table.rows.forEach((r) => byKey.set(compositeKey(r, otherKeys), r));
 
@@ -309,13 +337,52 @@ export function mergeManyTables(
     columns = [...columns, ...renamed];
     renamed.forEach((c) => (columnGroups[c] = table.fileName));
 
+    const usedKeys = new Set<string>();
+    let matchedBaseRows = 0;
+    const baseRowCountBeforeOrphans = rows.length;
     rows.forEach((row) => {
-      const match = byKey.get(compositeKey(row, baseKeys));
+      const key = compositeKey(row, baseKeys);
+      const match = byKey.get(key);
+      if (match) {
+        matchedBaseRows++;
+        usedKeys.add(key);
+      }
       extraCols.forEach((c, i) => {
         row[renamed[i]] = match ? match[c] ?? "" : "";
       });
     });
+
+    const lookupKeys = new Set(table.rows.map((lr) => compositeKey(lr, otherKeys)));
+    let unmatchedLookupCount = 0;
+
+    if (includeUnmatched) {
+      const orphanRows: DataRow[] = [];
+      const seenOrphanKeys = new Set<string>();
+      table.rows.forEach((lr) => {
+        const key = compositeKey(lr, otherKeys);
+        if (usedKeys.has(key) || seenOrphanKeys.has(key)) return;
+        seenOrphanKeys.add(key);
+        unmatchedLookupCount++;
+        const row: DataRow = {};
+        columns.forEach((c) => (row[c] = ""));
+        baseKeys.forEach((bk, i) => (row[bk] = lr[otherKeys[i]] ?? ""));
+        extraCols.forEach((c, i) => (row[renamed[i]] = lr[c] ?? ""));
+        orphanRows.push(row);
+      });
+      rows = [...rows, ...orphanRows];
+    } else {
+      unmatchedLookupCount = [...lookupKeys].filter((k) => !usedKeys.has(k)).length;
+    }
+
+    matchStats.push({
+      tableFileName: table.fileName,
+      matchedBaseRows,
+      unmatchedBaseRows: baseRowCountBeforeOrphans - matchedBaseRows,
+      totalBaseRows: baseRowCountBeforeOrphans,
+      unmatchedLookupRows: unmatchedLookupCount,
+      totalLookupRows: lookupKeys.size,
+    });
   });
 
-  return { columns, rows, columnGroups };
+  return { columns, rows, columnGroups, matchStats };
 }

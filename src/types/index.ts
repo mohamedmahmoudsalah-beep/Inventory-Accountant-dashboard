@@ -198,6 +198,7 @@ export interface ImportRecipe {
     keyPairs: { baseKey: string; otherKey: string }[];
     /** Same idea as basePicks, for this linked tab's own columns. */
     picks?: Record<string, string>;
+    includeUnmatched?: boolean;
   }[];
 }
 

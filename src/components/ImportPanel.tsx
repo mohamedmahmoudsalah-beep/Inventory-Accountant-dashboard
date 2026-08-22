@@ -3,12 +3,13 @@ import { X, Upload, Loader2, Link2, Plus, Trash2, ChevronDown } from "lucide-rea
 import type { DataRow, ImportRecipe } from "../types";
 import {
   parseFile, parseFiles, appendTables, mergeManyTables, aggregateForJoin, defaultPicksForKeys,
-  type ParsedFile, type LookupJoin, type JoinAgg,
+  type ParsedFile, type LookupJoin, type JoinAgg, type MergeMatchStats,
 } from "../lib/importFiles";
 import { fetchSheetAsRows, extractSheetId } from "../lib/sheets";
 import { listSheetTabs, type SheetTab } from "../lib/googleDrive";
 import { KeyPairsEditor, type KeyPair } from "./KeyPairsEditor";
 import { ColumnPicksEditor } from "./ColumnPicksEditor";
+import { showToast } from "../lib/toast";
 
 interface Props {
   onApply: (rows: DataRow[], columns: string[], columnGroups?: Record<string, string>, importRecipe?: ImportRecipe) => void;
@@ -29,6 +30,7 @@ interface TabLink {
   table: ParsedFile | null;
   keyPairs: KeyPair[];
   picks: Record<string, JoinAgg>;
+  includeUnmatched: boolean;
   busy: boolean;
   error: string | null;
 }
@@ -38,6 +40,7 @@ interface FileLink {
   table: ParsedFile | null;
   keyPairs: KeyPair[];
   picks: Record<string, JoinAgg>;
+  includeUnmatched: boolean;
 }
 
 function newKeyPairs(): KeyPair[] {
@@ -107,6 +110,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                 table,
                 keyPairs: link.keyPairs,
                 picks: (link.picks as Record<string, JoinAgg> | undefined) ?? defaultPicksForKeys(table, []),
+                includeUnmatched: link.includeUnmatched ?? false,
                 busy: false,
                 error: null,
               } satisfies TabLink;
@@ -117,6 +121,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                 table: null,
                 keyPairs: link.keyPairs,
                 picks: {},
+                includeUnmatched: link.includeUnmatched ?? false,
                 busy: false,
                 error: e instanceof Error ? e.message : "Couldn't reload this tab",
               } satisfies TabLink;
@@ -219,7 +224,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     const unused = (tabs ?? []).find((t) => t.title !== baseTabTitle && !tabLinks.some((l) => l.tabTitle === t.title));
     if (!unused) return;
     const id = crypto.randomUUID();
-    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, keyPairs: newKeyPairs(), picks: {}, busy: true, error: null }]);
+    setTabLinks((prev) => [...prev, { id, tabTitle: unused.title, table: null, keyPairs: newKeyPairs(), picks: {}, includeUnmatched: false, busy: true, error: null }]);
     fetchTabLinkData(id, unused.title);
   }
 
@@ -256,7 +261,7 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
   }
 
   function addFileLink() {
-    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, keyPairs: newKeyPairs(), picks: {} }]);
+    setFileLinks((prev) => [...prev, { id: crypto.randomUUID(), table: null, keyPairs: newKeyPairs(), picks: {}, includeUnmatched: false }]);
   }
 
   async function handleFileLinkFile(id: string, fileList: FileList | null) {
@@ -269,7 +274,20 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
     }
   }
 
-  function apply() {
+function describeMatchStats(stats: MergeMatchStats[]): string | null {
+  const problems = stats.filter((s) => s.unmatchedBaseRows > 0 || s.unmatchedLookupRows > 0);
+  if (problems.length === 0) return null;
+  return problems
+    .map((s) => {
+      const parts: string[] = [];
+      if (s.unmatchedBaseRows > 0) parts.push(`${s.unmatchedBaseRows} of ${s.totalBaseRows} base rows found no match`);
+      if (s.unmatchedLookupRows > 0) parts.push(`${s.unmatchedLookupRows} of ${s.totalLookupRows} "${s.tableFileName}" entries were never used`);
+      return `${s.tableFileName}: ${parts.join(", ")}.`;
+    })
+    .join(" ");
+}
+
+function apply() {
     if (mode === "replace" && tables[0]) {
       onApply(tables[0].rows, tables[0].columns);
     } else if (mode === "append" && tables.length > 0) {
@@ -295,14 +313,17 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
           table: aggregateForJoin(l.table, otherKeys, { keepColumns: pickCols, aggOverrides: l.picks }),
           baseKeys: l.keyPairs.map((p) => p.baseKey),
           otherKeys,
+          includeUnmatched: l.includeUnmatched,
         };
       });
-      const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
+      const { rows, columns, columnGroups, matchStats } = mergeManyTables(aggregatedBase, joins);
+      const summary = describeMatchStats(matchStats);
+      if (summary) showToast(summary, { type: "info", durationMs: 12000 });
       const recipe: ImportRecipe = {
         sheetUrl: sheetUrl.trim(),
         baseTab: baseTabTitle ?? "",
         basePicks,
-        links: ready.map((l) => ({ tabTitle: l.tabTitle, keyPairs: l.keyPairs, picks: l.picks })),
+        links: ready.map((l) => ({ tabTitle: l.tabTitle, keyPairs: l.keyPairs, picks: l.picks, includeUnmatched: l.includeUnmatched })),
       };
       onApply(rows, columns, columnGroups, recipe);
     } else if (mode === "merge" && mergeSource === "files" && fileBase) {
@@ -317,9 +338,12 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
           table: aggregateForJoin(l.table, otherKeys, { keepColumns: pickCols, aggOverrides: l.picks }),
           baseKeys: l.keyPairs.map((p) => p.baseKey),
           otherKeys,
+          includeUnmatched: l.includeUnmatched,
         };
       });
-      const { rows, columns, columnGroups } = mergeManyTables(aggregatedBase, joins);
+      const { rows, columns, columnGroups, matchStats } = mergeManyTables(aggregatedBase, joins);
+      const summary = describeMatchStats(matchStats);
+      if (summary) showToast(summary, { type: "info", durationMs: 12000 });
       onApply(rows, columns, columnGroups);
     }
     onClose();
@@ -541,6 +565,14 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                                   picks={link.picks}
                                   onChange={(picks) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, picks } : l)))}
                                 />
+                                <label className="flex items-center gap-2 text-[11px] text-[var(--text-dim)]">
+                                  <input
+                                    type="checkbox"
+                                    checked={link.includeUnmatched}
+                                    onChange={(e) => setTabLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, includeUnmatched: e.target.checked } : l)))}
+                                  />
+                                  Also keep "{link.tabTitle}" entries that don't have a matching row in the base table (as extra rows)
+                                </label>
                               </>
                             )}
                           </div>
@@ -629,6 +661,14 @@ export function ImportPanel({ onApply, onClose, initialRecipe }: Props) {
                               picks={link.picks}
                               onChange={(picks) => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, picks } : l)))}
                             />
+                            <label className="flex items-center gap-2 text-[11px] text-[var(--text-dim)]">
+                              <input
+                                type="checkbox"
+                                checked={link.includeUnmatched}
+                                onChange={(e) => setFileLinks((prev) => prev.map((l) => (l.id === link.id ? { ...l, includeUnmatched: e.target.checked } : l)))}
+                              />
+                              Also keep entries from this file that don't have a matching row in the base table (as extra rows)
+                            </label>
                           </>
                         )}
                       </div>
