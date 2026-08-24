@@ -40,6 +40,7 @@ import type {
   CalculatedColumn, CardConfig, ChartConfig, DataRow, Department, FilterConfig, ImportRecipe,
   MatrixConfig, Measure, PivotConfig, TextConfig, TaskPage,
 } from "./types";
+import type { AutoWidgetSpec } from "./lib/assistant";
 
 function makeDefaultPage(id: string, name: string): TaskPage {
   return {
@@ -783,6 +784,84 @@ function DashboardApp() {
     syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
   }
 
+  // --- AI-proposed dashboard ---
+  /** Turns an AI-proposed widget plan (column names, not ids — see
+   *  assistant.ts's AutoWidgetSpec) into real widgets on the current page.
+   *  Column names are matched case/whitespace-insensitively against the
+   *  page's actual columns, since the AI sometimes echoes a name back with
+   *  slightly different casing; a spec referencing a column that still
+   *  doesn't resolve is skipped rather than creating a broken widget. */
+  function applyAutoBuildWidgets(specs: AutoWidgetSpec[]) {
+    const norm = (s: string) => s.trim().toLowerCase();
+    const resolve = (name: string) => effective.columns.find((c) => norm(c) === norm(name));
+
+    const newCharts: ChartConfig[] = [];
+    const newPivots: PivotConfig[] = [];
+    const newMatrices: MatrixConfig[] = [];
+    const newCards: CardConfig[] = [];
+    const newTexts: TextConfig[] = [];
+    let skipped = 0;
+
+    for (const spec of specs) {
+      if (spec.kind === "card") {
+        const col = resolve(spec.valueColumn);
+        if (!col) { skipped++; continue; }
+        newCards.push({ id: crypto.randomUUID(), title: spec.title, value: { kind: "column", column: col, agg: spec.agg } });
+      } else if (spec.kind === "chart") {
+        const x = resolve(spec.xColumn), y = resolve(spec.yColumn);
+        if (!x || !y) { skipped++; continue; }
+        newCharts.push({
+          id: crypto.randomUUID(), title: spec.title, type: spec.chartType,
+          xKey: x, yKey: y, sortDir: "desc", rangeStart: 1, rangeEnd: 10,
+        });
+      } else if (spec.kind === "pivot") {
+        const groupCols = spec.groupColumns.map(resolve).filter((c): c is string => !!c);
+        const valueCol = resolve(spec.valueColumn);
+        if (groupCols.length === 0 || !valueCol) { skipped++; continue; }
+        newPivots.push({
+          id: crypto.randomUUID(), title: spec.title, groupCols,
+          values: [{ id: crypto.randomUUID(), label: `${spec.agg} ${valueCol}`, source: { kind: "column", column: valueCol, agg: spec.agg } }],
+          sortDir: "desc", rangeStart: 1, rangeEnd: 10,
+        });
+      } else if (spec.kind === "matrix") {
+        const row = resolve(spec.rowColumn), col = resolve(spec.colColumn), val = resolve(spec.valueColumn);
+        if (!row || !col || !val) { skipped++; continue; }
+        newMatrices.push({ id: crypto.randomUUID(), title: spec.title, rowCol: row, colCol: col, value: { kind: "column", column: val, agg: spec.agg } });
+      } else if (spec.kind === "text") {
+        newTexts.push({ id: crypto.randomUUID(), title: spec.title, body: spec.body });
+      }
+    }
+
+    if (newCharts.length + newPivots.length + newMatrices.length + newCards.length + newTexts.length === 0) {
+      showToast("الـ AI معرفش يبني أي widget من الأعمدة اللي رجعها.", { type: "error" });
+      return;
+    }
+
+    const nextOrder = [
+      ...getWidgetOrder(activePage),
+      ...newCards.map((w) => w.id), ...newCharts.map((w) => w.id),
+      ...newPivots.map((w) => w.id), ...newMatrices.map((w) => w.id), ...newTexts.map((w) => w.id),
+    ];
+    updatePage({
+      cards: [...activePage.cards, ...newCards],
+      charts: [...activePage.charts, ...newCharts],
+      pivots: [...activePage.pivots, ...newPivots],
+      matrices: [...activePage.matrices, ...newMatrices],
+      texts: [...activePage.texts, ...newTexts],
+      widgetOrder: nextOrder,
+    });
+    newCards.forEach((w) => syncWidget(w.id, activePage.id, "card", w));
+    newCharts.forEach((w) => syncWidget(w.id, activePage.id, "chart", w));
+    newPivots.forEach((w) => syncWidget(w.id, activePage.id, "pivot", w));
+    newMatrices.forEach((w) => syncWidget(w.id, activePage.id, "matrix", w));
+    newTexts.forEach((w) => syncWidget(w.id, activePage.id, "text", w));
+    syncPage({ ...activePage, widgetOrder: nextOrder }, activeDept.id);
+
+    if (skipped > 0) {
+      showToast(`اتبنى الداشبورد، بس ${skipped} widget اتلغى لأن عمود مقترح مكانش موجود فعليًا.`, { type: "error", durationMs: 6000 });
+    }
+  }
+
   // --- Measures & calculated columns ---
   function setMeasures(measures: Measure[]) {
     updatePage({ measures });
@@ -1264,6 +1343,8 @@ function DashboardApp() {
           rows={filteredRows}
           columns={effective.columns}
           onClose={() => setShowAssistant(false)}
+          canBuild={user?.role === "admin"}
+          onApplyAutoBuild={applyAutoBuildWidgets}
         />
       )}
 
